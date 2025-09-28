@@ -7,3 +7,4 @@ fpdf
 openpyxl
 matplotlib
 Pillow
+xlsxwriter
