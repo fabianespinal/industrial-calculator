@@ -2,6 +2,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from datetime import datetime
+from io import BytesIO
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import Preformatted
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_RIGHT
+
 
 # Page configuration
 st.set_page_config(
@@ -11,7 +22,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# CSS Styling
+# Complete CSS Styling
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -77,7 +88,8 @@ st.markdown("""
 }
 
 .stNumberInput > div > div > input,
-.stTextInput > div > div > input {
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea {
     background: var(--card-bg) !important;
     border: 2px solid rgba(0, 255, 255, 0.3) !important;
     border-radius: 15px !important;
@@ -90,7 +102,8 @@ st.markdown("""
 }
 
 .stNumberInput > div > div > input:focus,
-.stTextInput > div > div > input:focus {
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
     border-color: var(--primary-neon) !important;
     box-shadow: 0 0 20px rgba(0, 255, 255, 0.5) !important;
     outline: none !important;
@@ -108,50 +121,6 @@ st.markdown("""
     padding: 18px 24px !important;
     backdrop-filter: blur(15px) !important;
     transition: all 0.3s ease !important;
-}
-
-.stSelectbox > div > div > div[role="button"]:hover {
-    border-color: var(--primary-neon) !important;
-    box-shadow: 0 0 25px rgba(0, 255, 255, 0.4) !important;
-    transform: translateY(-2px) !important;
-}
-
-.stSelectbox [data-baseweb="select"] [role="listbox"] {
-    background: var(--card-bg) !important;
-    border: 2px solid rgba(0, 255, 255, 0.4) !important;
-    border-radius: 20px !important;
-    backdrop-filter: blur(25px) !important;
-    box-shadow: var(--shadow-glow) !important;
-    max-height: 400px !important;
-    margin-top: 8px !important;
-}
-
-.stSelectbox [role="option"] {
-    background: transparent !important;
-    color: rgba(255, 255, 255, 0.9) !important;
-    font-family: 'JetBrains Mono', monospace !important;
-    font-size: 14px !important;
-    font-weight: 500 !important;
-    padding: 18px 28px !important;
-    min-height: 56px !important;
-    border-bottom: 1px solid rgba(0, 255, 255, 0.1) !important;
-    transition: all 0.3s ease !important;
-}
-
-.stSelectbox [role="option"]:hover {
-    background: linear-gradient(90deg, rgba(0, 255, 255, 0.1), rgba(255, 0, 255, 0.1)) !important;
-    color: #ffffff !important;
-    border-left: 4px solid var(--primary-neon) !important;
-    padding-left: 24px !important;
-    transform: translateX(8px) !important;
-}
-
-.stSelectbox [role="option"][aria-selected="true"] {
-    background: var(--gradient-primary) !important;
-    color: #000000 !important;
-    font-weight: 700 !important;
-    border-left: 6px solid var(--accent-neon) !important;
-    padding-left: 22px !important;
 }
 
 .stButton > button {
@@ -342,7 +311,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <div class="main-title">🏗️ Calculadora Componentes Nave Signature</div>
-    <div class="main-subtitle">Sistema RIGC. Cálculo Estructural 2030</div>
+    <div class="main-subtitle">Sistema RIGC. Cálculo Estructural + Cotización 2030</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -371,24 +340,175 @@ def get_steel_profiles():
     
     return profiles
 
+# Quotation Generator Class
+class QuotationGenerator:
+    @staticmethod
+    def calculate_quote(products):
+        items_total = sum([p.get('subtotal', 0) for p in products if p.get('subtotal')])
+        
+        supervision = items_total * 0.10
+        admin = items_total * 0.04
+        insurance = items_total * 0.01
+        transport = items_total * 0.03
+        contingency = items_total * 0.03
+        
+        subtotal_general = items_total + supervision + admin + insurance + transport + contingency
+        itbis = subtotal_general * 0.18
+        grand_total = subtotal_general + itbis
+        
+        return {
+            'items_total': items_total,
+            'supervision': supervision,
+            'admin': admin,
+            'insurance': insurance,
+            'transport': transport,
+            'contingency': contingency,
+            'subtotal_general': subtotal_general,
+            'itbis': itbis,
+            'grand_total': grand_total
+        }
+    
+    @staticmethod
+    def generate_pdf(quote_data, company_info, products, totals, show_products=True):
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5 * inch, bottomMargin=0.5 * inch)
+        story = []
+        styles = getSampleStyleSheet()
+
+        # Title
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontName='Helvetica-Bold',
+            fontSize=20,
+            textColor=colors.HexColor('#004898'),
+            alignment=TA_RIGHT,
+            spaceAfter=12
+        )
+        story.append(Paragraph("COTIZACIÓN", title_style))
+        story.append(Spacer(1, 0.2 * inch))
+
+        # Quote number logic
+        client_name = company_info.get('client', '').strip()
+        initials = ''.join([word[0].upper() for word in client_name.split() if word]) if client_name and client_name != "Cliente No Especificado" else 'SC'
+        quote_date = datetime.now().strftime('%Y%m%d')
+        quote_number = f"{initials}-{quote_date}/1"
+
+        # Project info
+        info_data = [
+            ['INFORMACIÓN DEL PROYECTO'],
+            ['Cotización Nº:', quote_number],
+            ['Cliente:', company_info.get('client', '')],
+            ['Proyecto:', company_info.get('project', '')],
+            ['Fecha:', datetime.now().strftime('%d/%m/%Y')],
+            ['Validez:', company_info.get('validity', '30 días')]
+        ]
+        info_table = Table(info_data, colWidths=[2 * inch, 4 * inch])
+        info_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#004898')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+            ('GRID', (0, 1), (-1, -1), 0.5, colors.grey),
+        ]))
+        story.append(info_table)
+        story.append(Spacer(1, 0.2 * inch))
+
+        # Products table
+        if show_products and products:
+            products_data = [['Producto', 'Cantidad', 'Precio Unit.', 'Subtotal']]
+            for product in products:
+                if product.get('product_name'):
+                    products_data.append([
+                        product['product_name'],
+                        f"{product.get('quantity', 0):,.2f}",
+                        f"${product.get('unit_price', 0):,.2f}",
+                        f"${product.get('subtotal', 0):,.2f}"
+                    ])
+            products_table = Table(products_data, colWidths=[3 * inch, 1.5 * inch, 1.5 * inch, 1.5 * inch])
+            products_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0066cc')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f7f9fc')]),
+            ]))
+            story.append(products_table)
+            story.append(Spacer(1, 0.2 * inch))
+
+        # Totals table
+        totals_data = [
+            ['RESUMEN DE COSTOS', ''],
+            ['Total Items:', f"${totals['items_total']:,.2f}"],
+            ['Supervisión Técnica e Ingeniería (10%):', f"${totals['supervision']:,.2f}"],
+            ['Gastos Administrativos (4%):', f"${totals['admin']:,.2f}"],
+            ['Seguro de Riesgo (1%):', f"${totals['insurance']:,.2f}"],
+            ['Transporte (3%):', f"${totals['transport']:,.2f}"],
+            ['Imprevisto (3%):', f"${totals['contingency']:,.2f}"],
+            ['', ''],
+            ['Subtotal General:', f"${totals['subtotal_general']:,.2f}"],
+            ['ITBIS (18%):', f"${totals['itbis']:,.2f}"],
+            ['', ''],
+            ['TOTAL GENERAL:', f"${totals['grand_total']:,.2f}"]
+        ]
+        totals_table = Table(totals_data, colWidths=[4 * inch, 2 * inch])
+        totals_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#004898')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('BACKGROUND', (0, 11), (-1, 11), colors.HexColor('#004898')),
+            ('TEXTCOLOR', (0, 11), (-1, 11), colors.whitesmoke),
+            ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTNAME', (0, 11), (-1, 11), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 1), (-1, -1), 0.5, colors.grey),
+        ]))
+        story.append(totals_table)
+
+        # Notes section
+        if company_info.get('notes'):
+            notes_text = f"Notas:\n\n{company_info['notes']}"
+            notes_style = styles['Normal']
+            notes_style.fontName = 'Helvetica'
+            notes_style.fontSize = 8
+            notes_style.leading = 10
+            notes_para = Preformatted(notes_text, notes_style, maxLineLength=90)
+            story.append(Spacer(1, 0.2 * inch))
+            story.append(notes_para)
+
+        doc.build(story)
+        buffer.seek(0)
+        return buffer
+
 # Initialize data
 profiles = get_steel_profiles()
 profile_options = [f"{p[0]} x {p[1]} ({p[1]} lb/ft)" for p in profiles]
 profile_weights = {f"{p[0]} x {p[1]} ({p[1]} lb/ft)": p[1] for p in profiles}
+
+# Initialize session state
+if 'quote_products' not in st.session_state:
+    st.session_state.quote_products = []
+if 'last_steel_calc' not in st.session_state:
+    st.session_state.last_steel_calc = {}
+if 'last_materials_calc' not in st.session_state:
+    st.session_state.last_materials_calc = {}
 
 # Create tabs
 tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Cálculo de Acero", 
     "📦 Materiales", 
     "📚 Base de Datos", 
-    "💰 DR Gravamen + ITBIS"
+    "📋 Cotización"
 ])
 
 # TAB 1: STEEL CALCULATION
 with tab1:
     st.markdown('<div class="section-header">Cálculo de Acero Estructural</div>', unsafe_allow_html=True)
     
-    # Input dimensions
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -400,7 +520,6 @@ with tab1:
     with col4:
         distancia = st.number_input("Distancia entre Ejes (m)", min_value=0.1, value=7.27, step=0.01)
     
-    # Profile selection
     st.markdown('<div class="section-header">Selección de Perfiles</div>', unsafe_allow_html=True)
     
     col1, col2, col3, col4 = st.columns(4)
@@ -414,9 +533,6 @@ with tab1:
     with col4:
         columnas_laterales = st.selectbox("Perfil Columnas Laterales", options=profile_options, key="lat_profile")
     
-    # Additional configuration
-    st.markdown('<div class="section-header">Configuración Adicional</div>', unsafe_allow_html=True)
-    
     col1, col2, col3 = st.columns([2, 2, 4])
     
     with col1:
@@ -424,38 +540,31 @@ with tab1:
     with col2:
         incluir_laterales = st.checkbox("Incluir Columnas Laterales", value=True, key="include_lateral")
     with col3:
-        st.markdown("**Columnas Laterales:** Se calculan con la fórmula (Largo ÷ Distancia + 1) × Lados × Altura × Peso × 3.28")
+        st.info("Columnas Laterales se calculan: (Largo ÷ Distancia + 1) × Lados × Altura × Peso × 3.28")
     
-    # Calculate button
     if st.button("🔧 Calcular Acero Estructural Completo", type="primary"):
         try:
-            # Get weights
             peso_columnas = profile_weights[columnas]
             peso_tijerillas = profile_weights[tijerillas]
             peso_porticos = profile_weights[porticos]
             peso_laterales = profile_weights[columnas_laterales]
             
-            # 1. Columnas: (Largo / distancia + 1) × 2 × altura lateral × peso × 3.28
             num_columnas = ((largo / distancia) + 1) * 2
             libras_columnas = num_columnas * alto_lateral * peso_columnas * 3.28
             ton_columnas = libras_columnas / 2204.62
             
-            # 2. Tijerillas: (Largo / distancia + 1) × 2 × 1.1 × ancho × peso × 3.28
             num_tijerillas_calc = ((largo / distancia) + 1) * 2
             libras_tijerillas = num_tijerillas_calc * 1.1 * ancho * peso_tijerillas * 3.28
             ton_tijerillas = libras_tijerillas / 2204.62
             
-            # 3. Pórticos: Perímetro × peso × 3.28
             perimetro = (ancho * 2) + (largo * 2)
             libras_porticos = perimetro * peso_porticos * 3.28
             ton_porticos = libras_porticos / 2204.62
             
-            # 4. Columnas frontales: (Ancho / distancia + 1) × 2 × altura × 1.1 × 3.28 × peso
             num_columnas_frontales = ((ancho / distancia) + 1) * 2
             libras_columnas_frontales = num_columnas_frontales * alto_lateral * 1.1 * 3.28 * peso_columnas
             ton_columnas_frontales = libras_columnas_frontales / 2204.62
             
-            # 5. Columnas laterales (opcional)
             if incluir_laterales:
                 num_columnas_laterales = ((largo / distancia) + 1) * num_lados
                 libras_columnas_laterales = num_columnas_laterales * alto_lateral * peso_laterales * 3.28
@@ -465,55 +574,38 @@ with tab1:
                 libras_columnas_laterales = 0
                 ton_columnas_laterales = 0
             
-            # 6. Conexiones: 15% del total
             total_libras = (libras_columnas + libras_tijerillas + libras_porticos + 
                            libras_columnas_frontales + libras_columnas_laterales)
             libras_conexiones = total_libras * 0.15
             ton_conexiones = libras_conexiones / 2204.62
             
-            # 7. Elementos de fijación
             cantidad_pernos = ((largo / distancia) + 1) * 2
             tornillos_3_4 = int(libras_conexiones / 5)
             
-            # Total
             total_ton = (ton_columnas + ton_tijerillas + ton_porticos + 
                         ton_columnas_frontales + ton_columnas_laterales + ton_conexiones)
             
-            # Success message
+            st.session_state.last_steel_calc = {
+                'num_columnas': num_columnas,
+                'num_tijerillas': num_tijerillas_calc,
+                'num_porticos': perimetro,
+                'ton_columnas': ton_columnas,
+                'ton_tijerillas': ton_tijerillas,
+                'ton_porticos': ton_porticos,
+                'ton_frontales': ton_columnas_frontales,
+                'ton_laterales': ton_columnas_laterales,
+                'ton_conexiones': ton_conexiones,
+                'total_ton': total_ton,
+                'pernos': cantidad_pernos,
+                'tornillos_3_4': tornillos_3_4
+            }
+            
             st.success("✅ Cálculo de Acero Estructural Completado Exitosamente")
             
-            # Display results - First row
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-title">Columnas</div>
-                    <div class="metric-value">{num_columnas:.0f}</div>
-                    <div class="metric-subtitle">unidades</div>
-                    <hr style="margin: 20px 0; border: 1px solid rgba(0, 255, 255, 0.3);">
-                    <div class="metric-title">Tonelaje</div>
-                    <div class="metric-value" style="font-size: 28px;">{ton_columnas:.2f}</div>
-                    <div class="metric-subtitle">ton</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-title">Tijerillas</div>
-                    <div class="metric-value">{num_tijerillas_calc:.0f}</div>
-                    <div class="metric-subtitle">elementos</div>
-                    <hr style="margin: 20px 0; border: 1px solid rgba(0, 255, 255, 0.3);">
-                    <div class="metric-title">Tonelaje</div>
-                    <div class="metric-value" style="font-size: 28px;">{ton_tijerillas:.2f}</div>
-                    <div class="metric-subtitle">ton</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with col3:
-                st.markdown(f"""
-                <div class="metric-card">
+                st.markdown(f"""d">
                     <div class="metric-title">Pórticos de Frenado</div>
                     <div class="metric-value">{perimetro:.1f}</div>
                     <div class="metric-subtitle">m perímetro</div>
@@ -524,7 +616,6 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Second row
             col1, col2, col3 = st.columns(3)
             
             with col1:
@@ -554,15 +645,11 @@ with tab1:
                     </div>
                     """, unsafe_allow_html=True)
                 else:
-                    st.markdown(f"""
+                    st.markdown("""
                     <div class="metric-card">
                         <div class="metric-title">Columnas Laterales</div>
                         <div class="metric-value">--</div>
                         <div class="metric-subtitle">no incluidas</div>
-                        <hr style="margin: 20px 0; border: 1px solid rgba(0, 255, 255, 0.3);">
-                        <div class="metric-title">Tonelaje</div>
-                        <div class="metric-value" style="font-size: 28px;">0.00</div>
-                        <div class="metric-subtitle">ton</div>
                     </div>
                     """, unsafe_allow_html=True)
             
@@ -574,19 +661,18 @@ with tab1:
                     <div class="metric-subtitle">libras</div>
                     <hr style="margin: 20px 0; border: 1px solid rgba(0, 255, 255, 0.3);">
                     <div class="metric-title">Tonelaje</div>
-                    <div class="metric-value" style="font-size: 28px;">{ton_conexiones:.2f}</div>
+                    <div class="metric-value" style="font-size: 28px;">{ton_conexiones:,.2f}</div>
                     <div class="metric-subtitle">ton</div>
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Third row - Additional elements
             col1, col2, col3 = st.columns(3)
             
             with col1:
                 st.markdown(f"""
                 <div class="metric-card">
                     <div class="metric-title">Pernos</div>
-                    <div class="metric-value">{cantidad_pernos:.0f}</div>
+                    <div class="metric-value">{cantidad_pernos:,.0f}</div>
                     <div class="metric-subtitle">unidades</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -609,52 +695,44 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Total result
-            lateral_text = f" | Laterales: {ton_columnas_laterales:.2f} ton" if incluir_laterales else ""
+            lateral_text = f" | Laterales: {ton_columnas_laterales:,.2f} ton" if incluir_laterales else ""
             st.markdown(f"""
             <div class="result-card">
                 <div class="result-title">TOTAL ACERO ESTRUCTURAL</div>
-                <div class="result-value">{total_ton:.2f} TON</div>
+                <div class="result-value">{total_ton:,.2f} TON</div>
                 <div class="result-subtitle">
-                    Columnas: {ton_columnas:.2f} | Tijerillas: {ton_tijerillas:.2f} | Pórticos: {ton_porticos:.2f} | 
-                    Frontales: {ton_columnas_frontales:.2f}{lateral_text} | Conexiones: {ton_conexiones:.2f}
+                    Columnas: {ton_columnas:,.2f} | Tijerillas: {ton_tijerillas:,.2f} | Pórticos: {ton_porticos:,.2f} | 
+                    Frontales: {ton_columnas_frontales:,.2f}{lateral_text} | Conexiones: {ton_conexiones:,.2f}
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
-            # Visualization
             fig = go.Figure()
             
             components = ['Columnas', 'Tijerillas', 'Pórticos', 'Col. Frontales']
             tonnages = [ton_columnas, ton_tijerillas, ton_porticos, ton_columnas_frontales]
-            colors = ['rgba(0, 255, 255, 0.8)', 'rgba(255, 0, 255, 0.8)', 'rgba(255, 255, 0, 0.8)', 'rgba(0, 255, 0, 0.8)']
+            colors_chart = ['rgba(0, 255, 255, 0.8)', 'rgba(255, 0, 255, 0.8)', 'rgba(255, 255, 0, 0.8)', 'rgba(0, 255, 0, 0.8)']
             
             if incluir_laterales:
                 components.append('Col. Laterales')
                 tonnages.append(ton_columnas_laterales)
-                colors.append('rgba(255, 150, 0, 0.8)')
+                colors_chart.append('rgba(255, 150, 0, 0.8)')
             
             components.append('Conexiones')
             tonnages.append(ton_conexiones)
-            colors.append('rgba(150, 0, 255, 0.8)')
+            colors_chart.append('rgba(150, 0, 255, 0.8)')
             
-            for i, (component, tonnage, color) in enumerate(zip(components, tonnages, colors)):
+            for i, (component, tonnage, color) in enumerate(zip(components, tonnages, colors_chart)):
                 fig.add_trace(go.Bar(
                     name=component,
                     x=[component],
                     y=[tonnage],
-                    marker=dict(
-                        color=color,
-                        line=dict(color=color.replace('0.8', '1'), width=2)
-                    ),
+                    marker=dict(color=color, line=dict(color=color.replace('0.8', '1'), width=2)),
                     hovertemplate=f'<b>{component}</b><br>Tonelaje: %{{y:.2f}} ton<extra></extra>'
                 ))
             
             fig.update_layout(
-                title=dict(
-                    text='Distribución Completa de Tonelaje de Acero',
-                    font=dict(size=24, color='white', family='Space Grotesk')
-                ),
+                title=dict(text='Distribución Completa de Tonelaje de Acero', font=dict(size=24, color='white', family='Space Grotesk')),
                 plot_bgcolor='rgba(0, 0, 0, 0)',
                 paper_bgcolor='rgba(0, 0, 0, 0)',
                 font=dict(color='white', family='JetBrains Mono'),
@@ -688,7 +766,6 @@ with tab2:
     
     if st.button("📦 Calcular Materiales", type="primary"):
         try:
-            # Material calculations
             aluzinc_techo = (mat_ancho * mat_largo) * 1.1 * 3.28
             aluzinc_paredes = (mat_ancho * 2 + mat_largo * 2) * mat_alt_tech * 3.28
             correas_techo = (mat_ancho + 2) * mat_largo * 3.28
@@ -705,9 +782,27 @@ with tab2:
             pernos = (mat_largo / 7.27 + 1) * 2
             area_total = mat_ancho * mat_largo
             
+            # Save materials to session state for quotation import
+            st.session_state.last_materials_calc = {
+                'aluzinc_techo': aluzinc_techo,
+                'aluzinc_paredes': aluzinc_paredes,
+                'correas_techo': correas_techo,
+                'correas_paredes': correas_paredes,
+                'tornillos_techo': tornillos_Techo,
+                'tornillos_3_4': tornillos_3_4,
+                'tillas': tillas,
+                'tornillos_media': tornillos_media,
+                'canos': canos,
+                'caballetes': caballetes,
+                'cubrefaltas': cubrefaltas,
+                'bajantes': bajantes,
+                'boquillas': boquillas,
+                'pernos': pernos,
+                'area_total': area_total
+            }
+            
             st.success("✅ Cálculo de materiales completado exitosamente")
             
-            # Materials dataframe
             materials_data = {
                 'Material': [
                     'Aluzinc Techo', 'Aluzinc Paredes', 'Correas Techo', 'Correas Paredes',
@@ -715,20 +810,13 @@ with tab2:
                     'Cubrefaltas', 'Bajantes', 'Boquillas', 'Pernos'
                 ],
                 'Cantidad': [
-                    f"{aluzinc_techo:,.0f} pies",
-                    f"{aluzinc_paredes:,.0f} pies",
-                    f"{correas_techo:,.0f} pies",
-                    f"{correas_paredes:,.0f} pies",
-                    f"{tornillos_Techo:,.0f} unidades",
-                    f"{tornillos_3_4:,.0f} unidades",
-                    f"{tillas:,.0f} unidades",
-                    f"{tornillos_media:,.0f} unidades",
-                    f"{canos:,.0f} pies",
-                    f"{caballetes:,.0f} pies",
-                    f"{cubrefaltas:,.0f} pies",
-                    f"{bajantes:,.0f} unidades",
-                    f"{boquillas:,.0f} unidades",
-                    f"{pernos:,.0f} unidades"
+                    f"{aluzinc_techo:,.0f} pies", f"{aluzinc_paredes:,.0f} pies",
+                    f"{correas_techo:,.0f} pies", f"{correas_paredes:,.0f} pies",
+                    f"{tornillos_Techo:,.0f} unidades", f"{tornillos_3_4:,.0f} unidades",
+                    f"{tillas:,.0f} unidades", f"{tornillos_media:,.0f} unidades",
+                    f"{canos:,.0f} pies", f"{caballetes:,.0f} pies",
+                    f"{cubrefaltas:,.0f} pies", f"{bajantes:,.0f} unidades",
+                    f"{boquillas:,.0f} unidades", f"{pernos:,.0f} unidades"
                 ],
                 'Categoría': [
                     'Techado', 'Paredes', 'Estructura', 'Estructura',
@@ -738,21 +826,8 @@ with tab2:
             }
             
             df_materials = pd.DataFrame(materials_data)
+            st.dataframe(df_materials, hide_index=True, use_container_width=True, height=500)
             
-            # Display table
-            st.dataframe(
-                df_materials,
-                hide_index=True,
-                use_container_width=True,
-                height=500,
-                column_config={
-                    "Material": st.column_config.TextColumn("Material", width="medium"),
-                    "Cantidad": st.column_config.TextColumn("Cantidad", width="medium"),
-                    "Categoría": st.column_config.TextColumn("Categoría", width="small")
-                }
-            )
-            
-            # Area total
             st.markdown(f"""
             <div class="result-card">
                 <div class="result-title">ÁREA TOTAL DE LA NAVE</div>
@@ -768,15 +843,12 @@ with tab2:
 with tab3:
     st.markdown('<div class="section-header">Base de Datos de Perfiles W</div>', unsafe_allow_html=True)
     
-    # Search
     search = st.text_input("🔍 Buscar perfil:", placeholder="Ej: W24, 120, W14 x 68...")
     
-    # Create dataframe
     df_profiles = pd.DataFrame(profiles, columns=['Serie', 'Peso (lb/ft)'])
     df_profiles['Perfil Completo'] = df_profiles.apply(lambda x: f"{x['Serie']} x {x['Peso (lb/ft)']}", axis=1)
     df_profiles = df_profiles[['Serie', 'Perfil Completo', 'Peso (lb/ft)']]
     
-    # Filter
     if search:
         filtered_df = df_profiles[
             df_profiles['Perfil Completo'].str.contains(search, case=False) |
@@ -786,20 +858,8 @@ with tab3:
     else:
         filtered_df = df_profiles
     
-    # Display
-    st.dataframe(
-        filtered_df,
-        hide_index=True,
-        use_container_width=True,
-        height=600,
-        column_config={
-            "Serie": st.column_config.TextColumn("Serie", width="small"),
-            "Perfil Completo": st.column_config.TextColumn("Perfil Completo", width="medium"),
-            "Peso (lb/ft)": st.column_config.NumberColumn("Peso (lb/ft)", width="small")
-        }
-    )
+    st.dataframe(filtered_df, hide_index=True, use_container_width=True, height=600)
     
-    # Statistics
     col1, col2, col3 = st.columns(3)
     with col1:
         st.info(f"📊 **Total de perfiles:** {len(df_profiles)}")
@@ -809,218 +869,264 @@ with tab3:
         unique_series = df_profiles['Serie'].nunique()
         st.info(f"📋 **Series disponibles:** {unique_series}")
 
-# TAB 4: DR TAX CALCULATOR
+# TAB 4: QUOTATION - FIXED VERSION
 with tab4:
-    st.markdown('<div class="section-header">Calculadora DR Gravamen + ITBIS</div>', unsafe_allow_html=True)
-    st.markdown("Cálculo de impuestos de importación para República Dominicana")
+    st.markdown('<div class="section-header">Generador de Cotizaciones</div>', unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        subtotal = st.number_input("SubTotal Importado (USD)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-    with col2:
-        flete = st.number_input("Total Flete (USD)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-    with col3:
-        base = st.number_input("Grand Total Base (USD)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-    
-    # Tax calculations
-    suma = subtotal + flete
-    gravamen = suma * 0.14
-    itbis = suma * 0.18
-    total_final = base + gravamen + itbis
-    
-    # Display results
-    if suma > 0 or base > 0:
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">Suma Base</div>
-                <div class="metric-value">${suma:,.2f}</div>
-                <div class="metric-subtitle">SubTotal + Flete</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">Gravamen (14%)</div>
-                <div class="metric-value">${gravamen:,.2f}</div>
-                <div class="metric-subtitle">Impuesto aduanal</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">ITBIS (18%)</div>
-                <div class="metric-value">${itbis:,.2f}</div>
-                <div class="metric-subtitle">Impuesto al valor</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Final total
-        st.markdown(f"""
-        <div class="result-card">
-            <div class="result-title">GRAN TOTAL FINAL</div>
-            <div class="result-value">${total_final:,.2f}</div>
-            <div class="result-subtitle">Base + Gravamen (14%) + ITBIS (18%)</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Tax pie chart
-        if total_final > 0:
-            fig = go.Figure(data=[
-                go.Pie(
-                    labels=['Base', 'Gravamen (14%)', 'ITBIS (18%)'],
-                    values=[base, gravamen, itbis],
-                    hole=.4,
-                    marker=dict(
-                        colors=['#00ffff', '#ff00ff', '#ffff00'],
-                        line=dict(color='#ffffff', width=3)
-                    ),
-                    textfont=dict(color='white', size=14, family='JetBrains Mono'),
-                    hovertemplate='<b>%{label}</b><br>Monto: $%{value:,.2f}<br>Porcentaje: %{percent}<extra></extra>'
-                )
-            ])
-            
-            fig.update_layout(
-                title=dict(
-                    text='Desglose de Impuestos',
-                    font=dict(size=24, color='white', family='Space Grotesk')
-                ),
-                plot_bgcolor='rgba(0, 0, 0, 0)',
-                paper_bgcolor='rgba(0, 0, 0, 0)',
-                font=dict(color='white', family='JetBrains Mono'),
-                height=500,
-                showlegend=True,
-                legend=dict(bgcolor='rgba(0, 0, 0, 0)', font=dict(color='white'))
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-
-# SIDEBAR
-with st.sidebar:
-    st.markdown("""
-    <div style="background: var(--card-bg); 
-                border: 2px solid rgba(0, 255, 255, 0.4);
-                padding: 24px; border-radius: 20px; margin-bottom: 2rem;
-                backdrop-filter: blur(20px);
-                box-shadow: var(--shadow-glow);">
-        <h2 style="color: var(--primary-neon); margin-bottom: 16px; font-family: 'Space Grotesk', sans-serif;">📖 Guía de Uso</h2>
-        <p style="color: rgba(255,255,255,0.8); margin-bottom: 0;">
-            Sistema completo para cálculo de naves industriales
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("### 🔧 **Cálculo de Acero**")
-    st.markdown("""
-    • Dimensiones de la nave industrial
-    • Selección de 4 tipos de perfiles W
-    • **Incluye columnas laterales opcionales**
-    • Cálculos automáticos de hasta 7 componentes
-    • Visualización completa integrada
-    """)
-    
-    st.markdown("### 📦 **Cálculo de Materiales**")
-    st.markdown("""
-    • Lista completa de materiales
-    • Cantidades exactas calculadas
-    • Incluye tornillos 3/4" nuevos
-    • Área total automática
-    """)
-    
-    st.markdown("### 📚 **Base de Datos**")
-    st.markdown("""
-    • Más de 150 perfiles W
-    • Búsqueda avanzada
-    • 13 series disponibles
-    • Información completa
-    """)
-    
-    st.markdown("### 💰 **Calculadora DR**")
-    st.markdown("""
-    • Gravamen 14% automático
-    • ITBIS 18% calculado
-    • Visualización en tiempo real
-    • Desglose completo
-    """)
-    
-    st.markdown("---")
-    
-    st.markdown("### 📐 **Fórmulas Técnicas**")
-    
-    with st.expander("🏛️ **Columnas**"):
-        st.code("""
-Cantidad = (Largo ÷ Distancia + 1) × 2
-Libras = Cantidad × Altura × Peso × 3.28
-Toneladas = Libras ÷ 2204.62
-        """)
-    
-    with st.expander("🔗 **Tijerillas**"):
-        st.code("""
-Elementos = (Largo ÷ Distancia + 1) × 2
-Libras = Elementos × 1.1 × Ancho × Peso × 3.28
-Toneladas = Libras ÷ 2204.62
-        """)
-    
-    with st.expander("🏗️ **Pórticos**"):
-        st.code("""
-Perímetro = (Ancho + Largo) × 2
-Libras = Perímetro × Peso × 3.28
-Toneladas = Libras ÷ 2204.62
-        """)
-    
-    with st.expander("🏛️ **Columnas Laterales**"):
-        st.code("""
-Cantidad = (Largo ÷ Distancia + 1) × Lados
-Libras = Cantidad × Altura × Peso × 3.28
-Toneladas = Libras ÷ 2204.62
-        """)
-    
-    with st.expander("⚙️ **Conexiones y Fijación**"):
-        st.code("""
-Conexiones = Total_Libras × 15%
-Pernos = (Largo ÷ Distancia + 1) × 2
-Tornillos 3/4" = Conexiones ÷ 5
-        """)
-    
-    st.markdown("---")
-    
-    # Statistics
-    st.markdown("### 📊 **Estadísticas**")
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("Perfiles", len(profiles))
+        client_name = st.text_input("Cliente", key="client_name", value="")
+        project_name = st.text_input("Proyecto", key="project_name", value="")
     with col2:
-        st.metric("Series", len(set([p[0] for p in profiles])))
+        quote_date = st.date_input("Fecha", datetime.now())
+        quote_validity = st.selectbox("Validez", ["15 días", "30 días", "45 días", "60 días"])
     
-    st.markdown("---")
+    notes = st.text_area("Notas/Observaciones", height=100, value="")
     
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, rgba(0, 255, 255, 0.1), rgba(255, 0, 255, 0.1)); 
-                padding: 20px; border-radius: 15px; border: 2px solid rgba(0, 255, 255, 0.3);">
-        <h4 style="color: var(--primary-neon);">💡 Consejo Técnico</h4>
-        <p style="color: rgba(255, 255, 255, 0.9); font-size: 13px; margin: 0;">
-            Las columnas laterales son opcionales y se pueden activar/desactivar según el diseño.
-            Todos los cálculos usan fórmulas ingenieriles estándar.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="section-header">Productos</div>', unsafe_allow_html=True)
 
-# FOOTER
+    # Initialize session_state for products if not exists
+    if "quote_products" not in st.session_state:
+        st.session_state.quote_products = []
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.info("Los productos calculados se pueden importar automáticamente desde las pestañas de cálculo.")
+    with col2:
+        if st.button("🔄 Importar de Cálculos", type="secondary"):
+            imported_products = []
+
+            # Import from steel calculations
+            if st.session_state.get('last_steel_calc'):
+                calc = st.session_state.last_steel_calc
+                imported_products.append({
+                    "product_name": "Acero Estructural Total", 
+                    "quantity": float(calc.get('total_ton', 0)), 
+                    "unit_price": 0.0, 
+                    "subtotal": 0.0
+                })
+                imported_products.append({
+                    "product_name": f"Columnas Estructurales ({calc.get('num_columnas', 0):.0f} unidades)", 
+                    "quantity": float(calc.get('ton_columnas', 0)), 
+                    "unit_price": 0.0, 
+                    "subtotal": 0.0
+                })
+                imported_products.append({
+                    "product_name": f"Tijerillas ({calc.get('num_tijerillas', 0):.0f} elementos)", 
+                    "quantity": float(calc.get('ton_tijerillas', 0)), 
+                    "unit_price": 0.0, 
+                    "subtotal": 0.0
+                })
+
+            # Import from materials calculations
+            if st.session_state.get('last_materials_calc'):
+                mat_calc = st.session_state.last_materials_calc
+                imported_products.extend([
+                    {"product_name": "Aluzinc para Techo", "quantity": float(mat_calc.get('aluzinc_techo', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Aluzinc para Paredes", "quantity": float(mat_calc.get('aluzinc_paredes', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Correas Techo", "quantity": float(mat_calc.get('correas_techo', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Correas Paredes", "quantity": float(mat_calc.get('correas_paredes', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Tornillos para Techo", "quantity": float(mat_calc.get('tornillos_techo', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Tornillos 3/4\"", "quantity": float(mat_calc.get('tornillos_3_4', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Tillas", "quantity": float(mat_calc.get('tillas', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Tornillos 1/2\"", "quantity": float(mat_calc.get('tornillos_media', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Caños", "quantity": float(mat_calc.get('canos', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Caballetes", "quantity": float(mat_calc.get('caballetes', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Cubrefaltas", "quantity": float(mat_calc.get('cubrefaltas', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Bajantes", "quantity": float(mat_calc.get('bajantes', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Boquillas", "quantity": float(mat_calc.get('boquillas', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                    {"product_name": "Pernos", "quantity": float(mat_calc.get('pernos', 0)), "unit_price": 0.0, "subtotal": 0.0},
+                ])
+
+            # Save imported products to session state
+            st.session_state.quote_products = imported_products
+            st.rerun()
+
+    # Add button to manually add a product
+    if st.button("➕ Agregar Producto Manual"):
+        st.session_state.quote_products.append({
+            "product_name": "",
+            "quantity": 0.0,
+            "unit_price": 0.0,
+            "subtotal": 0.0
+        })
+        st.rerun()
+
+    # Create DataFrame from session state
+    if st.session_state.quote_products:
+        products_df = pd.DataFrame(st.session_state.quote_products)
+        
+        # Ensure columns exist
+        if 'product_name' not in products_df.columns:
+            products_df['product_name'] = ''
+        if 'quantity' not in products_df.columns:
+            products_df['quantity'] = 0.0
+        if 'unit_price' not in products_df.columns:
+            products_df['unit_price'] = 0.0
+        if 'subtotal' not in products_df.columns:
+            products_df['subtotal'] = 0.0
+        
+        # Convert types
+        products_df['product_name'] = products_df['product_name'].astype(str)
+        products_df['quantity'] = pd.to_numeric(products_df['quantity'], errors='coerce').fillna(0)
+        products_df['unit_price'] = pd.to_numeric(products_df['unit_price'], errors='coerce').fillna(0)
+        products_df['subtotal'] = products_df['quantity'] * products_df['unit_price']
+
+        # Show editable table
+        edited_df = st.data_editor(
+            products_df,
+            column_config={
+                "product_name": st.column_config.TextColumn("Producto", width="large"),
+                "quantity": st.column_config.NumberColumn("Cantidad", format="%.2f"),
+                "unit_price": st.column_config.NumberColumn("Precio Unit.", format="$%.2f"),
+                "subtotal": st.column_config.NumberColumn("Subtotal", format="$%.2f", disabled=True)
+            },
+            hide_index=True,
+            use_container_width=True,
+            num_rows="dynamic"
+        )
+
+        # Recalculate subtotals
+        edited_df['subtotal'] = edited_df['quantity'] * edited_df['unit_price']
+
+        # Filter valid products and sync back to session state
+        valid_products = edited_df[
+            (edited_df['product_name'].notna()) & 
+            (edited_df['product_name'] != '') &
+            (edited_df['quantity'] > 0)
+        ].to_dict('records')
+        
+        st.session_state.quote_products = valid_products
+
+        # Calculate and display totals
+        if valid_products:
+            quotation = QuotationGenerator()
+            totals = quotation.calculate_quote(valid_products)
+
+            st.markdown('<div class="section-header">📊 Resumen de Costos</div>', unsafe_allow_html=True)
+
+            # Display metrics in three columns
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric("Total Items", f"${totals['items_total']:,.2f}")
+                st.metric("Supervisión Técnica (10%)", f"${totals['supervision']:,.2f}")
+                st.metric("Gastos Admin. (4%)", f"${totals['admin']:,.2f}")
+
+            with col2:
+                st.metric("Seguro de Riesgo (1%)", f"${totals['insurance']:,.2f}")
+                st.metric("Transporte (3%)", f"${totals['transport']:,.2f}")
+                st.metric("Imprevisto (3%)", f"${totals['contingency']:,.2f}")
+
+            with col3:
+                st.metric("Subtotal General", f"${totals['subtotal_general']:,.2f}")
+                st.metric("ITBIS (18%)", f"${totals['itbis']:,.2f}")
+                st.markdown(f"""
+                <div class="result-card">
+                    <div class="result-title">TOTAL GENERAL</div>
+                    <div class="result-value">${totals['grand_total']:,.2f}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("---")
+
+            # Action buttons
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                # Add checkbox to toggle product inclusion in PDF
+                show_products_pdf = st.checkbox("Incluir productos en PDF", value=True)
+                
+                if st.button("📄 Generar PDF", type="primary"):
+                    try:
+                        company_info = {
+                            'client': client_name if client_name else "Cliente No Especificado",
+                            'project': project_name if project_name else "Proyecto No Especificado",
+                            'date': quote_date.strftime('%d/%m/%Y'),
+                            'validity': quote_validity,
+                            'notes': notes if notes else ""
+                        }
+                        
+                        pdf_buffer = quotation.generate_pdf(
+                            quote_data=company_info,
+                            company_info=company_info,
+                            products=valid_products if show_products_pdf else [],
+                            totals=totals,
+                            show_products=show_products_pdf
+                        )
+                        
+                        st.download_button(
+                            label="⬇️ Descargar PDF",
+                            data=pdf_buffer,
+                            file_name=f"cotizacion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                            mime="application/pdf"
+                        )
+                        st.success("✅ PDF generado exitosamente")
+                    except Exception as e:
+                        st.error(f"Error al generar PDF: {str(e)}")
+
+            with col2:
+                if st.button("💾 Guardar Borrador"):
+                    st.session_state.saved_quote = {
+                        'products': valid_products,
+                        'totals': totals,
+                        'company_info': {
+                            'client': client_name,
+                            'project': project_name,
+                            'validity': quote_validity,
+                            'notes': notes
+                        },
+                        'timestamp': datetime.now()
+                    }
+                    st.success("✅ Borrador guardado exitosamente")
+
+            with col3:
+                if st.button("🔄 Reiniciar"):
+                    st.session_state.quote_products = []
+                    st.rerun()
+
+            with col4:
+                try:
+                    excel_buffer = BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                        # Write products
+                        products_export = pd.DataFrame(valid_products)
+                        products_export.to_excel(writer, sheet_name='Productos', index=False)
+                        
+                        # Write totals
+                        totals_df = pd.DataFrame([totals]).T.reset_index()
+                        totals_df.columns = ['Concepto', 'Monto']
+                        totals_df.to_excel(writer, sheet_name='Totales', index=False)
+                    
+                    excel_buffer.seek(0)
+                    st.download_button(
+                        label="📊 Exportar Excel",
+                        data=excel_buffer,
+                        file_name=f"cotizacion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                except Exception as e:
+                    st.error(f"Error al generar Excel: {str(e)}")
+
+    else:
+        st.info("No hay productos en la cotización. Use 'Importar de Cálculos' o 'Agregar Producto Manual' para comenzar.")
+
+# Footer
 st.markdown("---")
 st.markdown("""
-<div style="text-align: center; padding: 2rem 0; 
-            background: var(--card-bg); border-radius: 20px; 
-            border: 1px solid rgba(0, 255, 255, 0.3);
-            backdrop-filter: blur(15px);">
-    <p style="margin: 0; font-size: 16px; color: rgba(255, 255, 255, 0.8);">
-        🏗️ <strong>Calculadora de Nave Industrial 2030</strong> | 
-        Sistema Avanzado de Cálculo Estructural | 
-        © 2030 | Versión 2.0
-    </p>
+<div style="
+    text-align: center;
+    padding: 2rem 0;
+    background: linear-gradient(to right, #0f0f19, #1a1a2e);
+    border-radius: 16px;
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 15px;
+    margin-top: 3rem;
+    box-shadow: 0 0 10px rgba(0,255,255,0.1);
+">
+    🏗️ <strong>Calculadora de Nave Industrial 2030</strong><br>
+    Sistema Avanzado de Cálculo Estructural + Cotización<br>
+    © 2030 | Versión 2.0
 </div>
 """, unsafe_allow_html=True)
