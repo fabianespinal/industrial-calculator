@@ -2,3 +2,8 @@ streamlit
 pandas
 numpy
 plotly
+reportlab
+fpdf
+openpyxl
+matplotlib
+Pillow
