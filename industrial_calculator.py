@@ -338,7 +338,72 @@ def get_steel_profiles():
         }
         return [(profile, weight) for profile, weight in hardcoded_profiles.items()]
 
-# Load profiles and build options
+# Materials prices data - Load from Excel
+@st.cache_data
+def get_materials_prices():
+    try:
+        df = pd.read_excel("precios_materiales.xlsx")
+        
+        # Try different possible column name combinations
+        material_col = None
+        precio_col = None
+        unidad_col = None
+        
+        # Look for material column
+        for col in df.columns:
+            col_lower = str(col).lower().strip()
+            if col_lower in ['material', 'materiales', 'producto', 'item', 'nombre', 'product_name', 'product']:
+                material_col = col
+                break
+        
+        # Look for price column
+        for col in df.columns:
+            col_lower = str(col).lower().strip()
+            if col_lower in ['precio', 'price', 'costo', 'valor', 'unit_price', 'unitprice']:
+                precio_col = col
+                break
+                
+        # Look for unit column
+        for col in df.columns:
+            col_lower = str(col).lower().strip()
+            if col_lower in ['unidad', 'unit', 'medida', 'um', 'unit ']:  # Note: includes 'unit ' with space
+                unidad_col = col
+                break
+        
+        if not material_col or not precio_col:
+            raise ValueError(f"Columnas requeridas no encontradas. Encontradas: {list(df.columns)}")
+        
+        prices_dict = {}
+        for _, row in df.iterrows():
+            material_name = str(row[material_col]).strip()
+            price = float(row[precio_col])
+            unit = str(row[unidad_col]).strip() if unidad_col else 'unidades'
+            prices_dict[material_name] = {'precio': price, 'unidad': unit}
+        
+        return prices_dict
+        
+    except Exception as e:
+        st.warning(f"No se pudo cargar precios_materiales.xlsx: {e}")
+        # Fallback to basic prices
+        return {
+            'Aluzinc Techo': {'precio': 8.5, 'unidad': 'pies'},
+            'Aluzinc Paredes': {'precio': 8.5, 'unidad': 'pies'},
+            'Correas Techo': {'precio': 12.0, 'unidad': 'pies'},
+            'Correas Paredes': {'precio': 12.0, 'unidad': 'pies'},
+            'Tornillos para Techo': {'precio': 0.15, 'unidad': 'unidades'},
+            'Tornillos 3/4"': {'precio': 0.25, 'unidad': 'unidades'},
+            'Tillas': {'precio': 15.0, 'unidad': 'unidades'},
+            'Tornillos 1/2"': {'precio': 0.18, 'unidad': 'unidades'},
+            'Caños': {'precio': 18.0, 'unidad': 'pies'},
+            'Caballetes': {'precio': 20.0, 'unidad': 'pies'},
+            'Cubrefaltas': {'precio': 12.5, 'unidad': 'pies'},
+            'Bajantes': {'precio': 35.0, 'unidad': 'unidades'},
+            'Boquillas': {'precio': 8.0, 'unidad': 'unidades'},
+            'Pernos': {'precio': 2.5, 'unidad': 'unidades'},
+            'Acero Estructural': {'precio': 2800.0, 'unidad': 'ton'}
+        }
+
+# Load profiles and materials prices
 try:
     profiles = get_steel_profiles()
     profile_options = [f"{p[0]}" for p in profiles]
@@ -354,10 +419,22 @@ except:
     }
     profile_options = list(profile_weights.keys())
 
+# Load materials prices
+materials_prices = get_materials_prices()
+
 class QuotationGenerator:
     @staticmethod
     def calculate_quote(products):
-        items_total = sum([p.get('subtotal', 0) for p in products if p.get('subtotal')])
+        # Ensure we're working with valid numeric data
+        items_total = 0
+        for p in products:
+            if p.get('subtotal') and isinstance(p.get('subtotal'), (int, float)):
+                items_total += float(p.get('subtotal', 0))
+            elif p.get('quantity') and p.get('unit_price'):
+                # Fallback calculation if subtotal is missing
+                quantity = float(p.get('quantity', 0))
+                unit_price = float(p.get('unit_price', 0))
+                items_total += quantity * unit_price
 
         supervision = items_total * 0.10
         admin = items_total * 0.04
@@ -370,15 +447,15 @@ class QuotationGenerator:
         grand_total = subtotal_general + itbis
 
         return {
-            'items_total': items_total,
-            'supervision': supervision,
-            'admin': admin,
-            'insurance': insurance,
-            'transport': transport,
-            'contingency': contingency,
-            'subtotal_general': subtotal_general,
-            'itbis': itbis,
-            'grand_total': grand_total
+            'items_total': round(items_total, 2),
+            'supervision': round(supervision, 2),
+            'admin': round(admin, 2),
+            'insurance': round(insurance, 2),
+            'transport': round(transport, 2),
+            'contingency': round(contingency, 2),
+            'subtotal_general': round(subtotal_general, 2),
+            'itbis': round(itbis, 2),
+            'grand_total': round(grand_total, 2)
         }
 
     @staticmethod
@@ -598,7 +675,7 @@ class QuotationGenerator:
 
         # Disclaimer note (at bottom)
         nota_texto = (
-            "<b>Nota:</b> Esta Presentacion es solo un estimado. "
+            "<b>Nota:</b> Esta cotización es solo un estimado. "
             "Todos los precios están sujetos a cambios. "
             "El precio final será confirmado al momento de emitir la orden de compra. "
             "Será necesaria una cotización formal para validar los términos y condiciones definitivos."
@@ -1020,22 +1097,34 @@ with tab3:
     
     # Import from calculations section
     st.markdown("### Importar desde Cálculos")
+    
+    # Show current price source
+    try:
+        test_df = pd.read_excel("precios_materiales.xlsx")
+        st.info(f"✅ Precios cargados desde precios_materiales.xlsx ({len(test_df)} materiales encontrados)")
+        with st.expander("Ver precios cargados"):
+            st.dataframe(test_df, use_container_width=True)
+    except Exception as e:
+        st.warning(f"❌ No se pudo cargar precios_materiales.xlsx: {e}")
+        st.info("💡 Usando precios predeterminados. Cree el archivo precios_materiales.xlsx para usar precios personalizados.")
+    
     col1, col2 = st.columns(2)
     
     with col1:
         if st.button("📊 Importar Cálculo de Acero", key="import_steel_btn"):
             if st.session_state.last_steel_calc:
                 calc = st.session_state.last_steel_calc
-                # Add steel calculation as a single item
+                # Get steel price from Excel
+                steel_price = materials_prices.get('Acero Estructural', {}).get('precio', 2800.0)
+                
                 steel_product = {
                     'product_name': f"Acero Estructural - {calc['total_ton']:.2f} ton",
                     'quantity': calc['total_ton'],
-                    'unit_price': 2800.0,  # Default price per ton
-                    'subtotal': calc['total_ton'] * 2800.0
+                    'unit_price': steel_price,
+                    'subtotal': calc['total_ton'] * steel_price
                 }
                 st.session_state.quote_products.append(steel_product)
                 st.success("Cálculo de acero importado exitosamente")
-                st.rerun()
             else:
                 st.warning("No hay cálculo de acero disponible. Calcule primero en la pestaña correspondiente.")
     
@@ -1043,35 +1132,42 @@ with tab3:
         if st.button("📦 Importar Cálculo de Materiales", key="import_materials_btn"):
             if st.session_state.last_materials_calc:
                 calc = st.session_state.last_materials_calc
-                # Add ALL materials as separate items with default prices
-                materials_to_add = [
-                    ('Aluzinc Techo', calc['aluzinc_techo'], 8.5, 'pies'),
-                    ('Aluzinc Paredes', calc['aluzinc_paredes'], 8.5, 'pies'),
-                    ('Correas Techo', calc['correas_techo'], 12.0, 'pies'),
-                    ('Correas Paredes', calc['correas_paredes'], 12.0, 'pies'),
-                    ('Tornillos para Techo', calc['tornillos_techo'], 0.15, 'unidades'),
-                    ('Tornillos 3/4"', calc['tornillos_3_4'], 0.25, 'unidades'),
-                    ('Tillas', calc['tillas'], 15.0, 'unidades'),
-                    ('Tornillos 1/2"', calc['tornillos_media'], 0.18, 'unidades'),
-                    ('Caños', calc['canos'], 18.0, 'pies'),
-                    ('Caballetes', calc['caballetes'], 20.0, 'pies'),
-                    ('Cubrefaltas', calc['cubrefaltas'], 12.5, 'pies'),
-                    ('Bajantes', calc['bajantes'], 35.0, 'unidades'),
-                    ('Boquillas', calc['boquillas'], 8.0, 'unidades'),
-                    ('Pernos', calc['pernos'], 2.5, 'unidades'),
+                
+                # Material names to match with Excel
+                materials_mapping = [
+                    ('Aluzinc Techo', calc['aluzinc_techo']),
+                    ('Aluzinc Paredes', calc['aluzinc_paredes']),
+                    ('Correas Techo', calc['correas_techo']),
+                    ('Correas Paredes', calc['correas_paredes']),
+                    ('Tornillos para Techo', calc['tornillos_techo']),
+                    ('Tornillos 3/4"', calc['tornillos_3_4']),
+                    ('Tillas', calc['tillas']),
+                    ('Tornillos 1/2"', calc['tornillos_media']),
+                    ('Caños', calc['canos']),
+                    ('Caballetes', calc['caballetes']),
+                    ('Cubrefaltas', calc['cubrefaltas']),
+                    ('Bajantes', calc['bajantes']),
+                    ('Boquillas', calc['boquillas']),
+                    ('Pernos', calc['pernos']),
                 ]
                 
-                for name, quantity, unit_price, unit in materials_to_add:
-                    material_product = {
-                        'product_name': f"{name} - {quantity:,.0f} {unit}",
-                        'quantity': quantity,
-                        'unit_price': unit_price,
-                        'subtotal': quantity * unit_price
-                    }
-                    st.session_state.quote_products.append(material_product)
+                imported_count = 0
+                for material_name, quantity in materials_mapping:
+                    if quantity > 0:  # Only add if quantity is positive
+                        price_info = materials_prices.get(material_name, {'precio': 0.0, 'unidad': 'unidades'})
+                        unit_price = price_info['precio']
+                        unit = price_info['unidad']
+                        
+                        material_product = {
+                            'product_name': f"{material_name} - {quantity:,.0f} {unit}",
+                            'quantity': quantity,
+                            'unit_price': unit_price,
+                            'subtotal': quantity * unit_price
+                        }
+                        st.session_state.quote_products.append(material_product)
+                        imported_count += 1
                 
-                st.success(f"Se importaron {len(materials_to_add)} materiales exitosamente")
-                st.rerun()
+                st.success(f"Se importaron {imported_count} materiales desde precios_materiales.xlsx")
             else:
                 st.warning("No hay cálculo de materiales disponible. Calcule primero en la pestaña correspondiente.")
     
@@ -1098,7 +1194,6 @@ with tab3:
                 }
                 st.session_state.quote_products.append(new_product)
                 st.success(f"Producto '{new_product_name}' agregado exitosamente")
-                st.rerun()
             else:
                 st.error("Por favor complete todos los campos con valores válidos")
     
@@ -1139,26 +1234,45 @@ with tab3:
             key="products_editor"
         )
         
-        # Update session state with edited data
+        # Always recalculate subtotals when data changes
         if not edited_df.empty:
-            # Recalculate subtotals
+            # Force recalculation of subtotals
+            edited_df['quantity'] = pd.to_numeric(edited_df['quantity'], errors='coerce').fillna(0)
+            edited_df['unit_price'] = pd.to_numeric(edited_df['unit_price'], errors='coerce').fillna(0)
             edited_df['subtotal'] = edited_df['quantity'] * edited_df['unit_price']
             
-            # Filter valid products
+            # Update the displayed dataframe with recalculated subtotals
+            st.write("**Updated Products with Recalculated Subtotals:**")
+            display_updated_df = edited_df.copy()
+            display_updated_df['quantity_formatted'] = display_updated_df['quantity'].apply(lambda x: f"{x:,.2f}")
+            display_updated_df['unit_price_formatted'] = display_updated_df['unit_price'].apply(lambda x: f"${x:,.2f}")
+            display_updated_df['subtotal_formatted'] = display_updated_df['subtotal'].apply(lambda x: f"${x:,.2f}")
+            
+            final_display_df = display_updated_df[['product_name', 'quantity_formatted', 'unit_price_formatted', 'subtotal_formatted']].copy()
+            final_display_df.columns = ['Producto', 'Cantidad', 'Precio Unitario', 'Subtotal']
+            st.dataframe(final_display_df, hide_index=True, use_container_width=True)
+        
+        # Update session state with edited data
+        if not edited_df.empty:
+            # Filter valid products and convert to records
             valid_products = edited_df[
                 (edited_df['product_name'].notna()) & 
                 (edited_df['product_name'] != '') &
                 (edited_df['quantity'] > 0)
-            ].to_dict('records')
+            ].copy()
             
-            st.session_state.quote_products = valid_products
+            # Ensure all numeric fields are properly converted
+            valid_products['quantity'] = valid_products['quantity'].astype(float)
+            valid_products['unit_price'] = valid_products['unit_price'].astype(float)
+            valid_products['subtotal'] = valid_products['subtotal'].astype(float)
+            
+            st.session_state.quote_products = valid_products.to_dict('records')
         
         # Remove products section
         col1, col2 = st.columns([3, 1])
         with col2:
             if st.button("🗑️ Limpiar Productos", key="clear_products_btn"):
                 st.session_state.quote_products = []
-                st.rerun()
         
         # Calculate totals if there are valid products
         if st.session_state.quote_products:
@@ -1252,4 +1366,3 @@ st.markdown("""
     © 2030 | Versión 2.0
 </div>
 """, unsafe_allow_html=True)
-
