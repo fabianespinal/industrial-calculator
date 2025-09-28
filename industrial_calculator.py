@@ -598,7 +598,7 @@ class QuotationGenerator:
 
         # Disclaimer note (at bottom)
         nota_texto = (
-            "<b>Nota:</b> Esta cotización es solo un estimado. "
+            "<b>Nota:</b> Esta Presentacion es solo un estimado. "
             "Todos los precios están sujetos a cambios. "
             "El precio final será confirmado al momento de emitir la orden de compra. "
             "Será necesaria una cotización formal para validar los términos y condiciones definitivos."
@@ -1252,3 +1252,4 @@ st.markdown("""
     © 2030 | Versión 2.0
 </div>
 """, unsafe_allow_html=True)
+
