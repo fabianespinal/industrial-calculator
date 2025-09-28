@@ -4,15 +4,13 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
 from io import BytesIO
-from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.platypus import Preformatted
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 from reportlab.lib.units import inch
-from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.enums import TA_RIGHT
-
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Preformatted, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_RIGHT, TA_CENTER
+import xlsxwriter
 
 # Page configuration
 st.set_page_config(
@@ -21,6 +19,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+# Initialize session state for calculations
+if 'last_steel_calc' not in st.session_state:
+    st.session_state.last_steel_calc = {}
+if 'last_materials_calc' not in st.session_state:
+    st.session_state.last_materials_calc = {}
+if 'quote_products' not in st.session_state:
+    st.session_state.quote_products = []
 
 # Complete CSS Styling
 st.markdown("""
@@ -315,47 +321,54 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Steel profiles data
+# Steel profiles data - Try to load from Excel, fallback to hardcoded
 @st.cache_data
 def get_steel_profiles():
-    profiles = []
-    series_data = {
-        'W27': [178, 161, 146, 114, 102, 94, 84],
-        'W24': [162, 146, 131, 117, 104, 94, 84, 76, 68, 62, 55],
-        'W21': [147, 132, 122, 111, 101, 93, 83, 73, 68, 62, 57, 50, 44],
-        'W18': [119, 106, 97, 86, 76, 71, 65, 60, 55, 50, 46, 40, 35],
-        'W16': [100, 89, 77, 67, 57, 50, 45, 40, 36, 31, 26],
-        'W14': [132, 120, 109, 99, 90, 82, 74, 68, 61, 53, 48, 43, 38, 34, 30, 26, 22],
-        'W12': [136, 120, 106, 96, 87, 79, 72, 65, 58, 53, 50, 45, 40, 35, 30, 26, 22, 19, 16, 14],
-        'W10': [112, 100, 88, 77, 68, 60, 54, 49, 45, 39, 33, 30, 26, 22, 19, 17, 15, 12],
-        'W8': [67, 58, 48, 40, 35, 31, 28, 24, 21, 18, 15, 13, 10],
-        'W6': [25, 20, 16, 15, 12, 9],
-        'W5': [19, 16],
-        'W4': [13]
-    }
-    
-    for series, weights in series_data.items():
-        for weight in weights:
-            profiles.append((series, weight))
-    
-    return profiles
+    try:
+        df = pd.read_excel("steel_profiles.xlsx")
+        return list(df.itertuples(index=False, name=None))
+    except:
+        # Fallback to hardcoded profile weights
+        hardcoded_profiles = {
+            'IPE-80': 6.0, 'IPE-100': 8.1, 'IPE-120': 10.4, 'IPE-140': 12.9,
+            'IPE-160': 15.8, 'IPE-180': 18.8, 'IPE-200': 22.4, 'IPE-220': 26.2,
+            'IPE-240': 30.7, 'IPE-270': 36.1, 'IPE-300': 42.2, 'IPE-330': 49.1,
+            'IPE-360': 57.1, 'IPE-400': 66.3, 'IPE-450': 77.6, 'IPE-500': 90.7,
+            'IPE-550': 106.0, 'IPE-600': 122.0
+        }
+        return [(profile, weight) for profile, weight in hardcoded_profiles.items()]
 
-# Quotation Generator Class
+# Load profiles and build options
+try:
+    profiles = get_steel_profiles()
+    profile_options = [f"{p[0]}" for p in profiles]
+    profile_weights = {f"{p[0]}": p[1] for p in profiles}
+except:
+    # Final fallback
+    profile_weights = {
+        'IPE-80': 6.0, 'IPE-100': 8.1, 'IPE-120': 10.4, 'IPE-140': 12.9,
+        'IPE-160': 15.8, 'IPE-180': 18.8, 'IPE-200': 22.4, 'IPE-220': 26.2,
+        'IPE-240': 30.7, 'IPE-270': 36.1, 'IPE-300': 42.2, 'IPE-330': 49.1,
+        'IPE-360': 57.1, 'IPE-400': 66.3, 'IPE-450': 77.6, 'IPE-500': 90.7,
+        'IPE-550': 106.0, 'IPE-600': 122.0
+    }
+    profile_options = list(profile_weights.keys())
+
 class QuotationGenerator:
     @staticmethod
     def calculate_quote(products):
         items_total = sum([p.get('subtotal', 0) for p in products if p.get('subtotal')])
-        
+
         supervision = items_total * 0.10
         admin = items_total * 0.04
         insurance = items_total * 0.01
         transport = items_total * 0.03
         contingency = items_total * 0.03
-        
+
         subtotal_general = items_total + supervision + admin + insurance + transport + contingency
         itbis = subtotal_general * 0.18
         grand_total = subtotal_general + itbis
-        
+
         return {
             'items_total': items_total,
             'supervision': supervision,
@@ -367,13 +380,81 @@ class QuotationGenerator:
             'itbis': itbis,
             'grand_total': grand_total
         }
-    
+
     @staticmethod
     def generate_pdf(quote_data, company_info, products, totals, show_products=True):
         buffer = BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5 * inch, bottomMargin=0.5 * inch)
         story = []
         styles = getSampleStyleSheet()
+
+        # Logo (optional)
+        logo_paths = [
+            "assets/logo.png",
+            "logo.png", 
+            "assets/logo.jpg",
+            "logo.jpg"
+        ]
+        
+        logo_added = False
+        for logo_path in logo_paths:
+            try:
+                import os
+                if os.path.exists(logo_path):
+                    logo = Image(logo_path, width=1 * inch, height=0.5 * inch)
+                    logo.hAlign = 'LEFT'
+                    story.append(logo)
+                    story.append(Spacer(0.5, 0.1 * inch))
+                    logo_added = True
+                    break
+            except Exception:
+                continue
+        
+        if not logo_added:
+            # Add company name as header instead of logo
+            company_header = ParagraphStyle(
+                'CompanyHeader',
+                parent=styles['Normal'],
+                fontName='Helvetica-Bold',
+                fontSize=14,
+                textColor=colors.HexColor('#004898'),
+                alignment=0,  # LEFT
+                spaceAfter=12
+            )
+            story.append(Paragraph("EMPRESA CONSTRUCTORA", company_header))
+            story.append(Spacer(1, 0.1 * inch))
+
+        # Company information header
+        company_info_style = ParagraphStyle(
+            'CompanyInfo',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=5,
+            leading=9,
+            textColor=colors.black,
+            alignment=0,  # LEFT
+            spaceAfter=6
+        )
+        
+        company_info_text = (
+            "PARQUE INDUSTRIAL DISDO - CALLE CENTRAL No. 1<br/>"
+            "HATO NUEVO PALAVE - SECTOR MANOGUAYABO<br/>"
+            "SANTO DOMINGO OESTE • TEL: 829-439-8476<br/>"
+            "RNC: 131-71683-2"
+        )
+        
+        story.append(Paragraph(company_info_text, company_info_style))
+        story.append(Spacer(1, 0.15 * inch))
+        
+        # Add divider line
+        divider_table = Table([['']], colWidths=[6.5 * inch])
+        divider_table.setStyle(TableStyle([
+            ('LINEBELOW', (0, 0), (-1, -1), 1, colors.HexColor('#004898')),
+            ('TOPPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        story.append(divider_table)
+        story.append(Spacer(1, 0.2 * inch))
 
         # Title
         title_style = ParagraphStyle(
@@ -385,7 +466,42 @@ class QuotationGenerator:
             alignment=TA_RIGHT,
             spaceAfter=12
         )
-        story.append(Paragraph("COTIZACIÓN", title_style))
+        story.append(Paragraph("ESTIMADO", title_style))
+        story.append(Spacer(1, 0.2 * inch))
+
+        # Notes section (moved to top, after title)
+        if company_info.get('notes'):
+            notes_text = company_info['notes']
+            notes_style = ParagraphStyle(
+                'NotesStyle',
+                parent=styles['Normal'],
+                fontName='Helvetica',
+                fontSize=9,
+                leading=12,
+                textColor=colors.black,
+                alignment=0,  # Left alignment for better readability
+                leftIndent=0,
+                rightIndent=0,
+                spaceAfter=6,
+                spaceBefore=0
+            )
+            
+            # Process the notes text to handle line breaks and basic formatting
+            formatted_notes = notes_text.replace('\n', '<br/>')
+            
+            notes_para = Paragraph(formatted_notes, notes_style)
+            notes_table = Table([[notes_para]], colWidths=[6.5 * inch])
+            notes_table.setStyle(TableStyle([
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.gray),
+                ('BACKGROUND', (0, 0), (-1, -1), colors.white),
+                ('LEFTPADDING', (0, 0), (-1, -1), 12),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+                ('TOPPADDING', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ]))
+            story.append(notes_table)
+            story.append(Spacer(1, 0.2 * inch))
         story.append(Spacer(1, 0.2 * inch))
 
         # Quote number logic
@@ -394,19 +510,28 @@ class QuotationGenerator:
         quote_date = datetime.now().strftime('%Y%m%d')
         quote_number = f"{initials}-{quote_date}/1"
 
-        # Project info
+        # Validate required fields
+        required_fields = ['client', 'project', 'validity']
+        missing = [field for field in required_fields if not company_info.get(field)]
+        if missing:
+            raise ValueError(f"Missing required fields: {', '.join(missing)}")
+
+        # Build info block
         info_data = [
-            ['INFORMACIÓN DEL PROYECTO'],
+            ['INFORMACIÓN DEL PROYECTO', ''],
             ['Cotización Nº:', quote_number],
-            ['Cliente:', company_info.get('client', '')],
-            ['Proyecto:', company_info.get('project', '')],
+            ['Cliente:', company_info['client']],
+            ['Proyecto:', company_info['project']],
             ['Fecha:', datetime.now().strftime('%d/%m/%Y')],
-            ['Validez:', company_info.get('validity', '30 días')]
+            ['Validez:', company_info['validity']],
+            ['Cotizado por:', company_info.get('quoted_by', 'N/A')]
         ]
+
         info_table = Table(info_data, colWidths=[2 * inch, 4 * inch])
         info_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#004898')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('SPAN', (0, 0), (-1, 0)),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
             ('FONTSIZE', (0, 0), (-1, -1), 8),
@@ -427,6 +552,7 @@ class QuotationGenerator:
                         f"${product.get('unit_price', 0):,.2f}",
                         f"${product.get('subtotal', 0):,.2f}"
                     ])
+
             products_table = Table(products_data, colWidths=[3 * inch, 1.5 * inch, 1.5 * inch, 1.5 * inch])
             products_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0066cc')),
@@ -455,6 +581,7 @@ class QuotationGenerator:
             ['', ''],
             ['TOTAL GENERAL:', f"${totals['grand_total']:,.2f}"]
         ]
+
         totals_table = Table(totals_data, colWidths=[4 * inch, 2 * inch])
         totals_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#004898')),
@@ -469,39 +596,45 @@ class QuotationGenerator:
         ]))
         story.append(totals_table)
 
-        # Notes section
-        if company_info.get('notes'):
-            notes_text = f"Notas:\n\n{company_info['notes']}"
-            notes_style = styles['Normal']
-            notes_style.fontName = 'Helvetica'
-            notes_style.fontSize = 8
-            notes_style.leading = 10
-            notes_para = Preformatted(notes_text, notes_style, maxLineLength=90)
-            story.append(Spacer(1, 0.2 * inch))
-            story.append(notes_para)
+        # Disclaimer note (at bottom)
+        nota_texto = (
+            "<b>Nota:</b> Esta cotización es solo un estimado. "
+            "Todos los precios están sujetos a cambios. "
+            "El precio final será confirmado al momento de emitir la orden de compra. "
+            "Será necesaria una cotización formal para validar los términos y condiciones definitivos."
+        )
+        
+        nota_style = ParagraphStyle(
+            'FinePrintBold',
+            fontName='Helvetica-Bold',
+            fontSize=6,
+            leading=8,
+            textColor=colors.black,
+            alignment=0
+        )
+        
+        nota_parrafo = Paragraph(nota_texto, nota_style)
+        nota_table = Table([[nota_parrafo]], colWidths=[6.5 * inch])
+        nota_table.setStyle(TableStyle([
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.gray),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.whitesmoke),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        
+        story.append(Spacer(1, 0.3 * inch))
+        story.append(nota_table)
 
         doc.build(story)
         buffer.seek(0)
         return buffer
 
-# Initialize data
-profiles = get_steel_profiles()
-profile_options = [f"{p[0]} x {p[1]} ({p[1]} lb/ft)" for p in profiles]
-profile_weights = {f"{p[0]} x {p[1]} ({p[1]} lb/ft)": p[1] for p in profiles}
-
-# Initialize session state
-if 'quote_products' not in st.session_state:
-    st.session_state.quote_products = []
-if 'last_steel_calc' not in st.session_state:
-    st.session_state.last_steel_calc = {}
-if 'last_materials_calc' not in st.session_state:
-    st.session_state.last_materials_calc = {}
-
 # Create tabs
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3 = st.tabs([
     "📊 Cálculo de Acero", 
-    "📦 Materiales", 
-    "📚 Base de Datos", 
+    "📦 Materiales",  
     "📋 Cotización"
 ])
 
@@ -512,13 +645,13 @@ with tab1:
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        largo = st.number_input("Largo (m)", min_value=0.0, value=80.0, step=0.1)
+        largo = st.number_input("Largo (m)", min_value=0.0, value=80.0, step=0.1, key="steel_largo")
     with col2:
-        ancho = st.number_input("Ancho (m)", min_value=0.0, value=25.0, step=0.1)
+        ancho = st.number_input("Ancho (m)", min_value=0.0, value=25.0, step=0.1, key="steel_ancho")
     with col3:
-        alto_lateral = st.number_input("Altura Lateral (m)", min_value=0.0, value=9.0, step=0.1)
+        alto_lateral = st.number_input("Altura Lateral (m)", min_value=0.0, value=9.0, step=0.1, key="steel_alto_lateral")
     with col4:
-        distancia = st.number_input("Distancia entre Ejes (m)", min_value=0.1, value=7.27, step=0.01)
+        distancia = st.number_input("Distancia entre Ejes (m)", min_value=0.1, value=7.27, step=0.01, key="steel_distancia")
     
     st.markdown('<div class="section-header">Selección de Perfiles</div>', unsafe_allow_html=True)
     
@@ -542,7 +675,7 @@ with tab1:
     with col3:
         st.info("Columnas Laterales se calculan: (Largo ÷ Distancia + 1) × Lados × Altura × Peso × 3.28")
     
-    if st.button("🔧 Calcular Acero Estructural Completo", type="primary"):
+    if st.button("🔧 Calcular Acero Estructural Completo", type="primary", key="calc_steel_btn"):
         try:
             peso_columnas = profile_weights[columnas]
             peso_tijerillas = profile_weights[tijerillas]
@@ -602,10 +735,38 @@ with tab1:
             
             st.success("✅ Cálculo de Acero Estructural Completado Exitosamente")
             
+            # Display metrics in cards
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                st.markdown(f"""d">
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-title">Columnas Principales</div>
+                    <div class="metric-value">{num_columnas:.0f}</div>
+                    <div class="metric-subtitle">unidades</div>
+                    <hr style="margin: 20px 0; border: 1px solid rgba(0, 255, 255, 0.3);">
+                    <div class="metric-title">Tonelaje</div>
+                    <div class="metric-value" style="font-size: 28px;">{ton_columnas:.2f}</div>
+                    <div class="metric-subtitle">ton</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-title">Tijerillas</div>
+                    <div class="metric-value">{num_tijerillas_calc:.0f}</div>
+                    <div class="metric-subtitle">unidades</div>
+                    <hr style="margin: 20px 0; border: 1px solid rgba(0, 255, 255, 0.3);">
+                    <div class="metric-title">Tonelaje</div>
+                    <div class="metric-value" style="font-size: 28px;">{ton_tijerillas:.2f}</div>
+                    <div class="metric-subtitle">ton</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                st.markdown(f"""
+                <div class="metric-card">
                     <div class="metric-title">Pórticos de Frenado</div>
                     <div class="metric-value">{perimetro:.1f}</div>
                     <div class="metric-subtitle">m perímetro</div>
@@ -707,6 +868,7 @@ with tab1:
             </div>
             """, unsafe_allow_html=True)
             
+            # Create chart
             fig = go.Figure()
             
             components = ['Columnas', 'Tijerillas', 'Pórticos', 'Col. Frontales']
@@ -754,9 +916,9 @@ with tab2:
     col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
-        mat_ancho = st.number_input("Ancho (m)", min_value=0.0, value=25.0, step=0.1, key="mat_width")
+        mat_ancho = st.number_input("Ancho (m)", min_value=0.0, value=25.0, step=0.1, key="mat_ancho")
     with col2:
-        mat_largo = st.number_input("Largo (m)", min_value=0.0, value=80.0, step=0.1, key="mat_length")
+        mat_largo = st.number_input("Largo (m)", min_value=0.0, value=80.0, step=0.1, key="mat_largo")
     with col3:
         mat_alt_lat = st.number_input("Altura Laterales (m)", min_value=0.0, value=9.0, step=0.1, key="mat_alt_lat")
     with col4:
@@ -764,7 +926,7 @@ with tab2:
     with col5:
         mat_dist = st.number_input("Distancia Ejes (m)", min_value=0.1, value=7.27, step=0.01, key="mat_dist")
     
-    if st.button("📦 Calcular Materiales", type="primary"):
+    if st.button("📦 Calcular Materiales", type="primary", key="calc_materials_btn"):
         try:
             aluzinc_techo = (mat_ancho * mat_largo) * 1.1 * 3.28
             aluzinc_paredes = (mat_ancho * 2 + mat_largo * 2) * mat_alt_tech * 3.28
@@ -839,40 +1001,12 @@ with tab2:
         except Exception as e:
             st.error(f"Error en el cálculo de materiales: {str(e)}")
 
-# TAB 3: DATABASE
+# TAB 3: QUOTATION
 with tab3:
-    st.markdown('<div class="section-header">Base de Datos de Perfiles W</div>', unsafe_allow_html=True)
-    
-    search = st.text_input("🔍 Buscar perfil:", placeholder="Ej: W24, 120, W14 x 68...")
-    
-    df_profiles = pd.DataFrame(profiles, columns=['Serie', 'Peso (lb/ft)'])
-    df_profiles['Perfil Completo'] = df_profiles.apply(lambda x: f"{x['Serie']} x {x['Peso (lb/ft)']}", axis=1)
-    df_profiles = df_profiles[['Serie', 'Perfil Completo', 'Peso (lb/ft)']]
-    
-    if search:
-        filtered_df = df_profiles[
-            df_profiles['Perfil Completo'].str.contains(search, case=False) |
-            df_profiles['Serie'].str.contains(search, case=False) |
-            df_profiles['Peso (lb/ft)'].astype(str).str.contains(search, case=False)
-        ]
-    else:
-        filtered_df = df_profiles
-    
-    st.dataframe(filtered_df, hide_index=True, use_container_width=True, height=600)
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.info(f"📊 **Total de perfiles:** {len(df_profiles)}")
-    with col2:
-        st.info(f"🔍 **Resultados filtrados:** {len(filtered_df)}")
-    with col3:
-        unique_series = df_profiles['Serie'].nunique()
-        st.info(f"📋 **Series disponibles:** {unique_series}")
-
-# TAB 4: QUOTATION - FIXED VERSION
-with tab4:
     st.markdown('<div class="section-header">Generador de Cotizaciones</div>', unsafe_allow_html=True)
     
+    # Company Information Section
+    st.markdown("### Información de la Cotización")
     col1, col2 = st.columns(2)
     with col1:
         client_name = st.text_input("Cliente", key="client_name", value="")
@@ -880,83 +1014,102 @@ with tab4:
     with col2:
         quote_date = st.date_input("Fecha", datetime.now())
         quote_validity = st.selectbox("Validez", ["15 días", "30 días", "45 días", "60 días"])
+        quoted_by = st.text_input("Cotizado por", key="quoted_by", value="")
     
     notes = st.text_area("Notas/Observaciones", height=100, value="")
     
-    st.markdown('<div class="section-header">Productos</div>', unsafe_allow_html=True)
-
-    # Initialize session_state for products if not exists
-    if "quote_products" not in st.session_state:
-        st.session_state.quote_products = []
-
-    col1, col2 = st.columns([3, 1])
+    # Import from calculations section
+    st.markdown("### Importar desde Cálculos")
+    col1, col2 = st.columns(2)
+    
     with col1:
-        st.info("Los productos calculados se pueden importar automáticamente desde las pestañas de cálculo.")
-    with col2:
-        if st.button("🔄 Importar de Cálculos", type="secondary"):
-            imported_products = []
-
-            # Import from steel calculations
-            if st.session_state.get('last_steel_calc'):
+        if st.button("📊 Importar Cálculo de Acero", key="import_steel_btn"):
+            if st.session_state.last_steel_calc:
                 calc = st.session_state.last_steel_calc
-                imported_products.append({
-                    "product_name": "Acero Estructural Total", 
-                    "quantity": float(calc.get('total_ton', 0)), 
-                    "unit_price": 0.0, 
-                    "subtotal": 0.0
-                })
-                imported_products.append({
-                    "product_name": f"Columnas Estructurales ({calc.get('num_columnas', 0):.0f} unidades)", 
-                    "quantity": float(calc.get('ton_columnas', 0)), 
-                    "unit_price": 0.0, 
-                    "subtotal": 0.0
-                })
-                imported_products.append({
-                    "product_name": f"Tijerillas ({calc.get('num_tijerillas', 0):.0f} elementos)", 
-                    "quantity": float(calc.get('ton_tijerillas', 0)), 
-                    "unit_price": 0.0, 
-                    "subtotal": 0.0
-                })
-
-            # Import from materials calculations
-            if st.session_state.get('last_materials_calc'):
-                mat_calc = st.session_state.last_materials_calc
-                imported_products.extend([
-                    {"product_name": "Aluzinc para Techo", "quantity": float(mat_calc.get('aluzinc_techo', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Aluzinc para Paredes", "quantity": float(mat_calc.get('aluzinc_paredes', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Correas Techo", "quantity": float(mat_calc.get('correas_techo', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Correas Paredes", "quantity": float(mat_calc.get('correas_paredes', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Tornillos para Techo", "quantity": float(mat_calc.get('tornillos_techo', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Tornillos 3/4\"", "quantity": float(mat_calc.get('tornillos_3_4', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Tillas", "quantity": float(mat_calc.get('tillas', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Tornillos 1/2\"", "quantity": float(mat_calc.get('tornillos_media', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Caños", "quantity": float(mat_calc.get('canos', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Caballetes", "quantity": float(mat_calc.get('caballetes', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Cubrefaltas", "quantity": float(mat_calc.get('cubrefaltas', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Bajantes", "quantity": float(mat_calc.get('bajantes', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Boquillas", "quantity": float(mat_calc.get('boquillas', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                    {"product_name": "Pernos", "quantity": float(mat_calc.get('pernos', 0)), "unit_price": 0.0, "subtotal": 0.0},
-                ])
-
-            # Save imported products to session state
-            st.session_state.quote_products = imported_products
-            st.rerun()
-
-    # Add button to manually add a product
-    if st.button("➕ Agregar Producto Manual"):
-        st.session_state.quote_products.append({
-            "product_name": "",
-            "quantity": 0.0,
-            "unit_price": 0.0,
-            "subtotal": 0.0
-        })
-        st.rerun()
-
-    # Create DataFrame from session state
+                # Add steel calculation as a single item
+                steel_product = {
+                    'product_name': f"Acero Estructural - {calc['total_ton']:.2f} ton",
+                    'quantity': calc['total_ton'],
+                    'unit_price': 2800.0,  # Default price per ton
+                    'subtotal': calc['total_ton'] * 2800.0
+                }
+                st.session_state.quote_products.append(steel_product)
+                st.success("Cálculo de acero importado exitosamente")
+                st.rerun()
+            else:
+                st.warning("No hay cálculo de acero disponible. Calcule primero en la pestaña correspondiente.")
+    
+    with col2:
+        if st.button("📦 Importar Cálculo de Materiales", key="import_materials_btn"):
+            if st.session_state.last_materials_calc:
+                calc = st.session_state.last_materials_calc
+                # Add ALL materials as separate items with default prices
+                materials_to_add = [
+                    ('Aluzinc Techo', calc['aluzinc_techo'], 8.5, 'pies'),
+                    ('Aluzinc Paredes', calc['aluzinc_paredes'], 8.5, 'pies'),
+                    ('Correas Techo', calc['correas_techo'], 12.0, 'pies'),
+                    ('Correas Paredes', calc['correas_paredes'], 12.0, 'pies'),
+                    ('Tornillos para Techo', calc['tornillos_techo'], 0.15, 'unidades'),
+                    ('Tornillos 3/4"', calc['tornillos_3_4'], 0.25, 'unidades'),
+                    ('Tillas', calc['tillas'], 15.0, 'unidades'),
+                    ('Tornillos 1/2"', calc['tornillos_media'], 0.18, 'unidades'),
+                    ('Caños', calc['canos'], 18.0, 'pies'),
+                    ('Caballetes', calc['caballetes'], 20.0, 'pies'),
+                    ('Cubrefaltas', calc['cubrefaltas'], 12.5, 'pies'),
+                    ('Bajantes', calc['bajantes'], 35.0, 'unidades'),
+                    ('Boquillas', calc['boquillas'], 8.0, 'unidades'),
+                    ('Pernos', calc['pernos'], 2.5, 'unidades'),
+                ]
+                
+                for name, quantity, unit_price, unit in materials_to_add:
+                    material_product = {
+                        'product_name': f"{name} - {quantity:,.0f} {unit}",
+                        'quantity': quantity,
+                        'unit_price': unit_price,
+                        'subtotal': quantity * unit_price
+                    }
+                    st.session_state.quote_products.append(material_product)
+                
+                st.success(f"Se importaron {len(materials_to_add)} materiales exitosamente")
+                st.rerun()
+            else:
+                st.warning("No hay cálculo de materiales disponible. Calcule primero en la pestaña correspondiente.")
+    
+    # Products Section
+    st.markdown("### Productos")
+    
+    # Add new product form
+    with st.expander("➕ Agregar Producto"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            new_product_name = st.text_input("Nombre del Producto", key="new_product_name")
+        with col2:
+            new_quantity = st.number_input("Cantidad", min_value=0.0, value=1.0, step=0.1, key="new_quantity")
+        with col3:
+            new_unit_price = st.number_input("Precio Unitario ($)", min_value=0.0, value=0.0, step=0.01, key="new_unit_price")
+        
+        if st.button("Agregar Producto", key="add_product_btn"):
+            if new_product_name and new_quantity > 0 and new_unit_price > 0:
+                new_product = {
+                    'product_name': new_product_name,
+                    'quantity': new_quantity,
+                    'unit_price': new_unit_price,
+                    'subtotal': new_quantity * new_unit_price
+                }
+                st.session_state.quote_products.append(new_product)
+                st.success(f"Producto '{new_product_name}' agregado exitosamente")
+                st.rerun()
+            else:
+                st.error("Por favor complete todos los campos con valores válidos")
+    
+    # Display current products
     if st.session_state.quote_products:
+        st.markdown("### Productos en la Cotización")
+        
+        # Create editable data frame
         products_df = pd.DataFrame(st.session_state.quote_products)
         
-        # Ensure columns exist
+        # Ensure all columns exist
         if 'product_name' not in products_df.columns:
             products_df['product_name'] = ''
         if 'quantity' not in products_df.columns:
@@ -967,57 +1120,65 @@ with tab4:
             products_df['subtotal'] = 0.0
         
         # Convert types
-        products_df['product_name'] = products_df['product_name'].astype(str)
         products_df['quantity'] = pd.to_numeric(products_df['quantity'], errors='coerce').fillna(0)
         products_df['unit_price'] = pd.to_numeric(products_df['unit_price'], errors='coerce').fillna(0)
         products_df['subtotal'] = products_df['quantity'] * products_df['unit_price']
-
+        
         # Show editable table
         edited_df = st.data_editor(
             products_df,
             column_config={
                 "product_name": st.column_config.TextColumn("Producto", width="large"),
                 "quantity": st.column_config.NumberColumn("Cantidad", format="%.2f"),
-                "unit_price": st.column_config.NumberColumn("Precio Unit.", format="$%.2f"),
-                "subtotal": st.column_config.NumberColumn("Subtotal", format="$%.2f", disabled=True)
+                "unit_price": st.column_config.NumberColumn("Precio Unit. ($)", format="%.2f"),
+                "subtotal": st.column_config.NumberColumn("Subtotal ($)", format="%.2f", disabled=True)
             },
             hide_index=True,
             use_container_width=True,
-            num_rows="dynamic"
+            num_rows="dynamic",
+            key="products_editor"
         )
-
-        # Recalculate subtotals
-        edited_df['subtotal'] = edited_df['quantity'] * edited_df['unit_price']
-
-        # Filter valid products and sync back to session state
-        valid_products = edited_df[
-            (edited_df['product_name'].notna()) & 
-            (edited_df['product_name'] != '') &
-            (edited_df['quantity'] > 0)
-        ].to_dict('records')
         
-        st.session_state.quote_products = valid_products
-
-        # Calculate and display totals
-        if valid_products:
-            quotation = QuotationGenerator()
-            totals = quotation.calculate_quote(valid_products)
-
-            st.markdown('<div class="section-header">📊 Resumen de Costos</div>', unsafe_allow_html=True)
-
-            # Display metrics in three columns
+        # Update session state with edited data
+        if not edited_df.empty:
+            # Recalculate subtotals
+            edited_df['subtotal'] = edited_df['quantity'] * edited_df['unit_price']
+            
+            # Filter valid products
+            valid_products = edited_df[
+                (edited_df['product_name'].notna()) & 
+                (edited_df['product_name'] != '') &
+                (edited_df['quantity'] > 0)
+            ].to_dict('records')
+            
+            st.session_state.quote_products = valid_products
+        
+        # Remove products section
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("🗑️ Limpiar Productos", key="clear_products_btn"):
+                st.session_state.quote_products = []
+                st.rerun()
+        
+        # Calculate totals if there are valid products
+        if st.session_state.quote_products:
+            totals = QuotationGenerator.calculate_quote(st.session_state.quote_products)
+            
+            # Display totals
+            st.markdown("### Resumen de Costos")
+            
             col1, col2, col3 = st.columns(3)
-
+            
             with col1:
                 st.metric("Total Items", f"${totals['items_total']:,.2f}")
                 st.metric("Supervisión Técnica (10%)", f"${totals['supervision']:,.2f}")
                 st.metric("Gastos Admin. (4%)", f"${totals['admin']:,.2f}")
-
+            
             with col2:
                 st.metric("Seguro de Riesgo (1%)", f"${totals['insurance']:,.2f}")
                 st.metric("Transporte (3%)", f"${totals['transport']:,.2f}")
                 st.metric("Imprevisto (3%)", f"${totals['contingency']:,.2f}")
-
+            
             with col3:
                 st.metric("Subtotal General", f"${totals['subtotal_general']:,.2f}")
                 st.metric("ITBIS (18%)", f"${totals['itbis']:,.2f}")
@@ -1027,89 +1188,50 @@ with tab4:
                     <div class="result-value">${totals['grand_total']:,.2f}</div>
                 </div>
                 """, unsafe_allow_html=True)
-
-            st.markdown("---")
-
-            # Action buttons
-            col1, col2, col3, col4 = st.columns(4)
-
+            
+            # Generate PDF button
+            st.markdown("### Generar Cotización")
+            
+            col1, col2 = st.columns(2)
             with col1:
-                # Add checkbox to toggle product inclusion in PDF
-                show_products_pdf = st.checkbox("Incluir productos en PDF", value=True)
-                
-                if st.button("📄 Generar PDF", type="primary"):
-                    try:
-                        company_info = {
-                            'client': client_name if client_name else "Cliente No Especificado",
-                            'project': project_name if project_name else "Proyecto No Especificado",
-                            'date': quote_date.strftime('%d/%m/%Y'),
-                            'validity': quote_validity,
-                            'notes': notes if notes else ""
-                        }
-                        
-                        pdf_buffer = quotation.generate_pdf(
-                            quote_data=company_info,
-                            company_info=company_info,
-                            products=valid_products if show_products_pdf else [],
-                            totals=totals,
-                            show_products=show_products_pdf
-                        )
-                        
-                        st.download_button(
-                            label="⬇️ Descargar PDF",
-                            data=pdf_buffer,
-                            file_name=f"cotizacion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                            mime="application/pdf"
-                        )
-                        st.success("✅ PDF generado exitosamente")
-                    except Exception as e:
-                        st.error(f"Error al generar PDF: {str(e)}")
-
-            with col2:
-                if st.button("💾 Guardar Borrador"):
-                    st.session_state.saved_quote = {
-                        'products': valid_products,
-                        'totals': totals,
-                        'company_info': {
-                            'client': client_name,
-                            'project': project_name,
-                            'validity': quote_validity,
-                            'notes': notes
-                        },
-                        'timestamp': datetime.now()
-                    }
-                    st.success("✅ Borrador guardado exitosamente")
-
-            with col3:
-                if st.button("🔄 Reiniciar"):
-                    st.session_state.quote_products = []
-                    st.rerun()
-
-            with col4:
+                show_products_in_pdf = st.checkbox("Mostrar productos en PDF", value=True)
+            
+            if st.button("📄 Generar PDF", type="primary", key="generate_pdf_btn"):
                 try:
-                    excel_buffer = BytesIO()
-                    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                        # Write products
-                        products_export = pd.DataFrame(valid_products)
-                        products_export.to_excel(writer, sheet_name='Productos', index=False)
-                        
-                        # Write totals
-                        totals_df = pd.DataFrame([totals]).T.reset_index()
-                        totals_df.columns = ['Concepto', 'Monto']
-                        totals_df.to_excel(writer, sheet_name='Totales', index=False)
+                    # Validate required fields
+                    company_info = {
+                        'client': client_name if client_name else "Cliente No Especificado",
+                        'project': project_name if project_name else "Proyecto No Especificado",
+                        'validity': quote_validity,
+                        'quoted_by': quoted_by if quoted_by else "N/A",
+                        'notes': notes
+                    }
                     
-                    excel_buffer.seek(0)
-                    st.download_button(
-                        label="📊 Exportar Excel",
-                        data=excel_buffer,
-                        file_name=f"cotizacion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    # Generate PDF
+                    pdf_buffer = QuotationGenerator.generate_pdf(
+                        quote_data={},
+                        company_info=company_info,
+                        products=st.session_state.quote_products,
+                        totals=totals,
+                        show_products=show_products_in_pdf
                     )
+                    
+                    # Create download button
+                    st.download_button(
+                        label="📥 Descargar Cotización PDF",
+                        data=pdf_buffer.getvalue(),
+                        file_name=f"cotizacion_{client_name.replace(' ', '_') if client_name else 'cotizacion'}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        key="download_pdf_btn"
+                    )
+                    
+                    st.success("✅ Cotización generada exitosamente")
+                    
                 except Exception as e:
-                    st.error(f"Error al generar Excel: {str(e)}")
-
+                    st.error(f"Error al generar la cotización: {str(e)}")
+    
     else:
-        st.info("No hay productos en la cotización. Use 'Importar de Cálculos' o 'Agregar Producto Manual' para comenzar.")
+        st.info("No hay productos en la cotización. Agregue productos manualmente o importe desde los cálculos.")
 
 # Footer
 st.markdown("---")
