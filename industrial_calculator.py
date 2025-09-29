@@ -752,7 +752,7 @@ with tab1:
     with col3:
         st.info("Columnas Laterales se calculan: (Largo ÷ Distancia + 1) × Lados × Altura × Peso × 3.28")
     
-    if st.button("🔧 Calcular Acero Estructural Completo", type="primary", key="calc_steel_btn"):
+    if st.button("🔩 Calcular Acero Estructural Completo", type="primary", key="calc_steel_btn"):
         try:
             peso_columnas = profile_weights[columnas]
             peso_tijerillas = profile_weights[tijerillas]
@@ -1366,6 +1366,7 @@ st.markdown("""
     © 2030 | Versión 2.0
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
