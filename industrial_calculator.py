@@ -316,7 +316,7 @@ st.markdown("""
 # Header
 st.markdown("""
 <div class="main-header">
-    <div class="main-title">🏬 Calculadora Componentes Nave Signature</div>
+    <div class="main-title">💻 Calculadora Componentes Nave Signature</div>
     <div class="main-subtitle">Sistema RIGC. Cálculo Estructural + Cotización 2030</div>
 </div>
 """, unsafe_allow_html=True)
@@ -1361,11 +1361,12 @@ st.markdown("""
     margin-top: 3rem;
     box-shadow: 0 0 10px rgba(0,255,255,0.1);
 ">
-    🏬 <strong>Calculadora de Nave Industrial Signature 2030</strong><br>
+    💻 <strong>Calculadora de Nave Industrial Signature 2030</strong><br>
     Sistema Avanzado de Cálculo Estructural + Cotización<br>
     © 2030 | Versión 2.0
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
