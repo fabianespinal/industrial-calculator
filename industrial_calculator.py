@@ -15,7 +15,7 @@ import xlsxwriter
 # Page configuration
 st.set_page_config(
     page_title="Calculadora Nave Industrial Signature 2030",
-    page_icon="🏗️",
+    page_icon="🏬",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -1271,7 +1271,7 @@ with tab3:
         # Remove products section
         col1, col2 = st.columns([3, 1])
         with col2:
-            if st.button("🗑️ Limpiar Productos", key="clear_products_btn"):
+            if st.button("🔄 Limpiar Productos", key="clear_products_btn"):
                 st.session_state.quote_products = []
         
         # Calculate totals if there are valid products
@@ -1366,5 +1366,6 @@ st.markdown("""
     © 2030 | Versión 2.0
 </div>
 """, unsafe_allow_html=True)
+
 
 
