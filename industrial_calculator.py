@@ -1361,9 +1361,10 @@ st.markdown("""
     margin-top: 3rem;
     box-shadow: 0 0 10px rgba(0,255,255,0.1);
 ">
-    🏗️ <strong>Calculadora de Nave Industrial 2030</strong><br>
+    🏗️ <strong>Calculadora de Nave Industrial Signature 2030</strong><br>
     Sistema Avanzado de Cálculo Estructural + Cotización<br>
     © 2030 | Versión 2.0
 </div>
 """, unsafe_allow_html=True)
+
 
