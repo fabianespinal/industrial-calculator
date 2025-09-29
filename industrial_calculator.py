@@ -14,7 +14,7 @@ import xlsxwriter
 
 # Page configuration
 st.set_page_config(
-    page_title="Calculadora de Nave Industrial 2030",
+    page_title="Calculadora Nave Industrial Signature 2030",
     page_icon="🏗️",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -1366,3 +1366,4 @@ st.markdown("""
     © 2030 | Versión 2.0
 </div>
 """, unsafe_allow_html=True)
+
