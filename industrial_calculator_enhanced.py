@@ -18,7 +18,7 @@ import os
 # Page configuration
 st.set_page_config(
     page_title="Calculadora de Nave Industrial 2030",
-    page_icon="🏗️",
+    page_icon="♾️",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -1468,4 +1468,5 @@ def show_main_app():
 if st.session_state.authenticated:
     show_main_app()
 else:
+
     show_login_page()
