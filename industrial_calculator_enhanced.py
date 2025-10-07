@@ -376,7 +376,7 @@ def show_login_page():
         
         st.markdown("")
         
-        if st.button("🚀 INGRESAR", key="login_btn"):
+        if st.button("INGRESAR", key="login_btn"):
             if username and passcode:
                 expected_passcode = USER_PASSCODES.get(username.lower())
                 
@@ -1471,5 +1471,6 @@ if st.session_state.authenticated:
 else:
 
     show_login_page()
+
 
 
