@@ -209,17 +209,17 @@ st.markdown("""
 }
 
 .stButton > button {
-    background: linear-gradient(135deg, #00ffff 0%, #0099ff 50%, #ff00ff 100%) !important;
+    background-color: #f0f2f6 !important;
     color: black !important;
-    font-weight: 700 !important;
-    border: none !important;
-    padding: 12px 30px !important;
-    border-radius: 25px !important;
-    font-size: 18px !important;
-    text-transform: uppercase !important;
-    letter-spacing: 1px !important;
-    transition: all 0.3s ease !important;
-    box-shadow: 0 0 25px rgba(0, 255, 255, 0.4) !important;
+    border: 1px solid #ced4da !important;
+    font-weight: normal !important;
+    padding: 8px 24px !important;
+    border-radius: 4px !important;
+    font-size: 14px !important;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+    box-shadow: none !important;
+    transition: none !important;
 }
 
 .stButton > button:hover {
@@ -335,36 +335,62 @@ STEEL_PROFILES_EXTENDED = {
 
 # --- AUTHENTICATION FUNCTIONS ---
 def show_login_page():
-    logo_paths = ["logo.png", "assets/logo.png", "logo.jpg", "assets/logo.jpg"]
-    logo_displayed = False
+    # Check for logo in common paths
+    logo = next((p for p in ["logo.png", "assets/logo.png", "logo.jpg", "assets/logo.jpg"] 
+                 if os.path.exists(p)), None)
     
-    for logo_path in logo_paths:
-        if os.path.exists(logo_path):
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                st.image(logo_path, use_container_width=True)
-            logo_displayed = True
-            break
-    
-    if not logo_displayed:
+    # Create centered layout
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        # Display logo or icon
+        if logo:
+            st.image(logo, use_container_width=True)
+        else:
+            st.markdown('<div style="text-align:center; font-size:72px; margin:2rem 0;">🏗️</div>', 
+                       unsafe_allow_html=True)
+        
+        # Login container with title
         st.markdown("""
-        <div style="text-align: center; padding: 2rem;">
-            <div style="font-size: 72px;">🏗️</div>
+        <div class="login-container" style="
+            background: rgba(15, 15, 25, 0.95);
+            border: 2px solid rgba(0, 255, 255, 0.3);
+            border-radius: 30px;
+            padding: 2rem;
+            backdrop-filter: blur(25px);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.3);
+            margin-top: 1rem;
+        ">
+            <h1 style="
+                text-align: center;
+                font-size: 48px;
+                font-weight: 800;
+                background: linear-gradient(135deg, #00ffff 0%, #0099ff 50%, #ff00ff 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                margin-bottom: 0.5rem;
+            ">RIGC 2030</h1>
+            <p style="text-align: center; color: rgba(255,255,255,0.7); font-size: 14px; 
+                      letter-spacing: 2px; margin-bottom: 2rem;">
+                SISTEMA DE CÁLCULO INDUSTRIAL
+            </p>
         </div>
         """, unsafe_allow_html=True)
-    st.markdown('<div class="login-container">', unsafe_allow_html=True)
-    st.markdown('<h1 class="login-title">RIGC 2030</h1>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align: center; color: rgba(255,255,255,0.8); margin-bottom: 2rem;">Sistema de Cálculo Industrial Avanzado</p>', unsafe_allow_html=True)
-    
-    if st.session_state.attempts >= MAX_ATTEMPTS:
-        st.error("⚠️ Máximo número de intentos alcanzado. Contacte al administrador.")
-        return
-    
-    with st.form("login_form"):
-        username = st.text_input("Usuario", placeholder="Ingrese su usuario")
-        password = st.text_input("Contraseña", type="password", placeholder="Ingrese su contraseña")
-        submit = st.form_submit_button("ACCEDER", use_container_width=True)
         
+        # Check attempts
+        if st.session_state.attempts >= MAX_ATTEMPTS:
+            st.error("⚠️ Máximo de intentos alcanzado. Contacte al administrador.")
+            return
+        
+        # Login form
+        with st.form("login_form", clear_on_submit=True):
+            username = st.text_input("👤 Usuario", placeholder="Ingrese su usuario")
+            password = st.text_input("🔒 Contraseña", type="password", placeholder="Ingrese su contraseña")
+            
+            col_a, col_b, col_c = st.columns([1, 2, 1])
+            with col_b:
+                submit = st.form_submit_button("ACCEDER", use_container_width=True, type="primary")
+        
+        # Handle authentication
         if submit:
             if username in USER_PASSCODES and password == USER_PASSCODES[username]:
                 st.session_state.authenticated = True
@@ -374,13 +400,9 @@ def show_login_page():
             else:
                 st.session_state.attempts += 1
                 remaining = MAX_ATTEMPTS - st.session_state.attempts
-                if remaining > 0:
-                    st.error(f"❌ Credenciales incorrectas. Intentos restantes: {remaining}")
-                else:
-                    st.error("❌ Máximo número de intentos alcanzado")
+                st.error(f"❌ Credenciales incorrectas. {'Intentos: ' + str(remaining) if remaining > 0 else 'Último intento'}")
+                if remaining == 0:
                     st.rerun()
-    
-    st.markdown('</div>', unsafe_allow_html=True)
 
 # --- CALCULATION FUNCTIONS ---
 def calculate_steel_structure(largo, ancho, alto_lateral, alto_techado, separacion_ejes, tipo_columna, tipo_viga, tipo_correa):
@@ -1390,6 +1412,5 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
-
 
 
