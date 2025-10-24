@@ -600,11 +600,7 @@ class QuotationGenerator:
             alignment=1,
             spaceAfter=30
         )
-        
-        # Header
-        story.append(Paragraph(f"<b>{company_info['company_name']}</b>", title_style))
-        story.append(Spacer(1, 12))
-        
+     
         # Quote info
         info_data = [
             ['INFORMACIÓN DEL PROYECTO', ''],
@@ -1412,5 +1408,6 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
+
 
 
