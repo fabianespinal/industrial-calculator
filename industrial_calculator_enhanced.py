@@ -838,7 +838,7 @@ def show_main_app():
         with col5:
             distancia = st.number_input("Distancia entre Ejes (m)", min_value=0.1, value=float(default_distancia), step=0.01, key="steel_distancia")
 
-        if alto_techado < alto_lateral:
+        if alto_techado > alto_lateral:
             st.warning("⚠️ La altura del techado debe ser mayor o igual a la altura lateral.")
             st.stop()
 
@@ -1447,4 +1447,5 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
+
 
