@@ -64,10 +64,6 @@ LABOR_RATES = {
     "daily_supervisor_rate": 150.0,
 }
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from io import BytesIO
-
 def create_building_sketch(dimensions):
     # Extract dimensions with defaults
     length = dimensions.get('length', 20.0)        # largo (X)
@@ -1529,4 +1525,5 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
+
 
