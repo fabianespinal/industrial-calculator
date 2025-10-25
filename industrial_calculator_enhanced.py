@@ -54,7 +54,7 @@ if 'last_materials_calc' not in st.session_state:
 if 'quote_products' not in st.session_state:
     st.session_state.quote_products = []
 
-# LABOR COST CONFIGURATION
+# LABOR RATES (not used directly, but kept for future)
 LABOR_RATES = {
     "steel_installation_rate": 350.0,
     "roofing_rate": 8.5,
@@ -65,116 +65,89 @@ LABOR_RATES = {
 }
 
 def create_building_sketch(dimensions):
-    # Extract dimensions with defaults
-    length = dimensions.get('length', 20.0)        # largo (X)
-    width = dimensions.get('width', 15.0)          # ancho (Y)
+    # Accept a single dict
+    length = dimensions.get('length', 20.0)
+    width = dimensions.get('width', 15.0)
     wall_height = dimensions.get('wall_height', 4.0)
-    roof_rise = dimensions.get('roof_height', 2.0)  # extra height for gable roof
-    
+    roof_rise = dimensions.get('roof_height', 2.0)
     total_height = wall_height + roof_rise
     area = length * width
 
-    # Create figure with 3 subplots: top, front, side
     fig, (ax_top, ax_front, ax_side) = plt.subplots(1, 3, figsize=(12, 4))
     fig.patch.set_facecolor('white')
 
-    # ===== 1. TOP VIEW (Plan) =====
+    # TOP VIEW
     ax_top.set_xlim(0, length)
     ax_top.set_ylim(0, width)
     top_rect = patches.Rectangle((0, 0), length, width,
                                 linewidth=2, edgecolor='black',
                                 facecolor='lightgray', alpha=0.4)
     ax_top.add_patch(top_rect)
-    
-    # Dimensions
     ax_top.annotate('', xy=(0, -0.8), xytext=(length, -0.8),
                     arrowprops=dict(arrowstyle='<->', lw=1.2))
     ax_top.text(length/2, -1.2, f'{length} m', ha='center', va='top', fontsize=9)
-    
     ax_top.annotate('', xy=(-0.8, 0), xytext=(-0.8, width),
                     arrowprops=dict(arrowstyle='<->', lw=1.2))
     ax_top.text(-1.2, width/2, f'{width} m', ha='right', va='center', rotation=90, fontsize=9)
-    
     ax_top.set_title('PLANTA', fontsize=10, fontweight='bold')
     ax_top.set_aspect('equal')
     ax_top.axis('off')
 
-    # ===== 2. FRONT VIEW (Width x Height) =====
+    # FRONT VIEW
     ax_front.set_xlim(-1, width + 1)
     ax_front.set_ylim(0, total_height + 1)
-    
-    # Walls
     front_wall = patches.Rectangle((0, 0), width, wall_height,
                                    linewidth=2, edgecolor='black',
                                    facecolor='lightgray', alpha=0.4)
     ax_front.add_patch(front_wall)
-    
-    # Gable roof
     roof_points = [(0, wall_height), (width/2, total_height), (width, wall_height)]
     front_roof = patches.Polygon(roof_points, linewidth=2, edgecolor='black',
                                  facecolor='darkgray', alpha=0.5)
     ax_front.add_patch(front_roof)
-    
-    # Dimensions
     ax_front.annotate('', xy=(0, -0.5), xytext=(width, -0.5),
                       arrowprops=dict(arrowstyle='<->', lw=1.2))
     ax_front.text(width/2, -0.8, f'{width} m', ha='center', va='top', fontsize=9)
-    
     ax_front.annotate('', xy=(-0.5, 0), xytext=(-0.5, wall_height),
                       arrowprops=dict(arrowstyle='<->', lw=1.2))
     ax_front.text(-0.8, wall_height/2, f'{wall_height} m', ha='right', va='center', rotation=90, fontsize=9)
-    
     ax_front.annotate('', xy=(width + 0.5, 0), xytext=(width + 0.5, total_height),
                       arrowprops=dict(arrowstyle='<->', lw=1.2))
     ax_front.text(width + 0.8, total_height/2, f'{total_height} m', ha='left', va='center', rotation=90, fontsize=9)
-    
     ax_front.set_title('VISTA FRONTAL', fontsize=10, fontweight='bold')
     ax_front.set_aspect('equal')
     ax_front.axis('off')
 
-    # ===== 3. SIDE VIEW (Length x Height) =====
+    # SIDE VIEW
     ax_side.set_xlim(-1, length + 1)
     ax_side.set_ylim(0, total_height + 1)
-    
-    # Walls
     side_wall = patches.Rectangle((0, 0), length, wall_height,
                                   linewidth=2, edgecolor='black',
                                   facecolor='lightgray', alpha=0.4)
     ax_side.add_patch(side_wall)
-    
-    # Flat roof top (or gable if you prefer — here we use flat for simplicity)
     roof_side = patches.Rectangle((0, wall_height), length, roof_rise,
                                   linewidth=2, edgecolor='black',
                                   facecolor='darkgray', alpha=0.5)
     ax_side.add_patch(roof_side)
-    
-    # Dimensions
     ax_side.annotate('', xy=(0, -0.5), xytext=(length, -0.5),
                      arrowprops=dict(arrowstyle='<->', lw=1.2))
     ax_side.text(length/2, -0.8, f'{length} m', ha='center', va='top', fontsize=9)
-    
     ax_side.annotate('', xy=(-0.5, 0), xytext=(-0.5, wall_height),
                      arrowprops=dict(arrowstyle='<->', lw=1.2))
     ax_side.text(-0.8, wall_height/2, f'{wall_height} m', ha='right', va='center', rotation=90, fontsize=9)
-    
     ax_side.set_title('VISTA LATERAL', fontsize=10, fontweight='bold')
     ax_side.set_aspect('equal')
     ax_side.axis('off')
 
-    # Add total area at bottom
     fig.text(0.5, 0.02, f'ÁREA TOTAL: {area:,.2f} m²', 
              ha='center', fontsize=10, fontweight='bold')
-
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # Make room for title and area text
-
-    # Save to buffer
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
     buf = BytesIO()
     plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     buf.seek(0)
     return buf
 
-# Complete CSS Styling
+# CSS Styling
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -329,7 +302,7 @@ st.markdown("""
 
 # Steel profile weights (lbs/ft)
 profile_weights = {
-    # W-Shapes (Wide Flange Beams)
+    # ... (keep all your profile_weights as-is – omitted here for brevity but must be included)
     "W12x136": 136, "W12x120": 120, "W12x106": 106, "W12x96": 96, "W12x87": 87,
     "W12x79": 79, "W12x72": 72, "W12x65": 65, "W12x58": 58, "W12x53": 53,
     "W12x50": 50, "W12x45": 45, "W12x40": 40, "W12x35": 35, "W12x30": 30,
@@ -359,18 +332,15 @@ profile_weights = {
     "W36x302": 302, "W36x282": 282, "W36x262": 262, "W36x247": 247, "W36x232": 232,
     "W36x210": 210, "W36x194": 194, "W36x182": 182, "W36x170": 170, "W36x160": 160,
     "W36x150": 150, "W36x135": 135,
-    # HSS Square Tubes
     "HSS8x8x1/2": 59.32, "HSS8x8x3/8": 45.34, "HSS8x8x5/16": 38.11, "HSS8x8x1/4": 30.84,
     "HSS6x6x1/2": 42.30, "HSS6x6x3/8": 32.58, "HSS6x6x5/16": 27.48, "HSS6x6x1/4": 22.37,
     "HSS5x5x1/2": 35.24, "HSS5x5x3/8": 27.04, "HSS5x5x5/16": 22.79, "HSS5x5x1/4": 18.54,
     "HSS4x4x1/2": 27.48, "HSS4x4x3/8": 21.21, "HSS4x4x5/16": 17.95, "HSS4x4x1/4": 14.62,
     "HSS3x3x3/8": 14.72, "HSS3x3x5/16": 12.51, "HSS3x3x1/4": 10.26, "HSS3x3x3/16": 7.90,
-    # HSS Rectangular Tubes
     "HSS8x6x1/2": 50.81, "HSS8x6x3/8": 38.96, "HSS8x6x5/16": 32.80, "HSS8x6x1/4": 26.60,
     "HSS8x4x1/2": 42.30, "HSS8x4x3/8": 32.58, "HSS8x4x5/16": 27.48, "HSS8x4x1/4": 22.37,
     "HSS6x4x1/2": 35.24, "HSS6x4x3/8": 27.04, "HSS6x4x5/16": 22.79, "HSS6x4x1/4": 18.54,
     "HSS5x3x1/2": 27.48, "HSS5x3x3/8": 21.21, "HSS5x3x5/16": 17.95, "HSS5x3x1/4": 14.62,
-    # C-Channels
     "C15x50": 50, "C15x40": 40, "C15x33.9": 33.9,
     "C12x30": 30, "C12x25": 25, "C12x20.7": 20.7,
     "C10x30": 30, "C10x25": 25, "C10x20": 20, "C10x15.3": 15.3,
@@ -378,20 +348,17 @@ profile_weights = {
     "C6x13": 13, "C6x10.5": 10.5, "C6x8.2": 8.2,
     "C4x7.25": 7.25, "C4x6.25": 6.25, "C4x5.4": 5.4,
     "C3x6": 6, "C3x5": 5, "C3x4.1": 4.1, "C3x3.5": 3.5,
-    # MC-Channels (Miscellaneous Channels)
     "MC18x58": 58, "MC18x51.9": 51.9, "MC18x45.8": 45.8, "MC18x42.7": 42.7,
     "MC12x50": 50, "MC12x45": 45, "MC12x40": 40, "MC12x35": 35, "MC12x31": 31,
     "MC12x14.3": 14.3, "MC12x10.6": 10.6,
     "MC10x41.1": 41.1, "MC10x33.6": 33.6, "MC10x28.5": 28.5, "MC10x25": 25, "MC10x22": 22,
     "MC10x8.4": 8.4, "MC10x6.5": 6.5,
-    # L-Angles (Equal Leg)
     "L8x8x1": 51.0, "L8x8x3/4": 38.9, "L8x8x5/8": 32.7, "L8x8x1/2": 26.4,
     "L6x6x3/4": 28.7, "L6x6x5/8": 24.2, "L6x6x1/2": 19.6, "L6x6x3/8": 14.9, "L6x6x5/16": 12.4,
     "L5x5x3/4": 23.6, "L5x5x5/8": 20.0, "L5x5x1/2": 16.2, "L5x5x3/8": 12.3, "L5x5x5/16": 10.3,
     "L4x4x3/4": 18.5, "L4x4x5/8": 15.7, "L4x4x1/2": 12.8, "L4x4x3/8": 9.8, "L4x4x5/16": 8.2, "L4x4x1/4": 6.6,
     "L3.5x3.5x1/2": 11.1, "L3.5x3.5x3/8": 8.5, "L3.5x3.5x5/16": 7.2, "L3.5x3.5x1/4": 5.8,
     "L3x3x1/2": 9.4, "L3x3x3/8": 7.2, "L3x3x5/16": 6.1, "L3x3x1/4": 4.9, "L3x3x3/16": 3.71,
-    # L-Angles (Unequal Leg)
     "L8x6x1": 44.2, "L8x6x3/4": 33.8, "L8x6x5/8": 28.5, "L8x6x1/2": 23.0,
     "L8x4x1": 37.4, "L8x4x3/4": 28.7, "L8x4x5/8": 24.2, "L8x4x1/2": 19.6,
     "L6x4x3/4": 23.6, "L6x4x5/8": 20.0, "L6x4x1/2": 16.2, "L6x4x3/8": 12.3,
@@ -399,7 +366,6 @@ profile_weights = {
     "L5x3x1/2": 12.8, "L5x3x3/8": 9.7, "L5x3x5/16": 8.2, "L5x3x1/4": 6.6,
     "L4x3.5x1/2": 11.9, "L4x3.5x3/8": 9.1, "L4x3.5x5/16": 7.7, "L4x3.5x1/4": 6.2,
     "L4x3x5/8": 13.6, "L4x3x1/2": 11.1, "L4x3x3/8": 8.5, "L4x3x5/16": 7.2, "L4x3x1/4": 5.8,
-    # S-Shapes (American Standard Beams)
     "S24x121": 121, "S24x106": 106, "S24x100": 100, "S24x90": 90, "S24x80": 80,
     "S20x96": 96, "S20x86": 86, "S20x75": 75, "S20x66": 66,
     "S18x70": 70, "S18x54.7": 54.7,
@@ -412,7 +378,6 @@ profile_weights = {
     "S3x7.5": 7.5, "S3x5.7": 5.7,
 }
 
-# Sort profiles for better organization in dropdowns
 def sort_profiles(profiles):
     profile_types = ['W', 'S', 'HSS', 'MC', 'C', 'L']
     sorted_profiles = []
@@ -486,7 +451,6 @@ def show_login_page():
 
 # --- CALCULATION FUNCTIONS ---
 def calculate_materials(largo, ancho, alto_lateral, alto_techado):
-    """Calculate material requirements"""
     perimetro = 2 * (largo + ancho)
     aluzinc_techo = largo * ancho * 1.1 * 3.28
     aluzinc_pared = perimetro * alto_lateral * 3.28
@@ -521,14 +485,13 @@ class QuotationGenerator:
             float(p.get('quantity', 0)) * float(p.get('unit_price', 0))
             for p in products
         )
-        # Note: original had duplicate line—removed one
-        supervision = items_total * 0.10    # 10%
-        admin = items_total * 0.04          # 4%
-        insurance = items_total * 0.01      # 1%
-        transport = items_total * 0.03      # 3%
-        contingency = items_total * 0.03    # 3%
+        supervision = items_total * 0.10
+        admin = items_total * 0.04
+        insurance = items_total * 0.01
+        transport = items_total * 0.03
+        contingency = items_total * 0.03
         subtotal_general = items_total + supervision + admin + insurance + transport + contingency
-        itbis = subtotal_general * 0.18     # 18%
+        itbis = subtotal_general * 0.18
         grand_total = subtotal_general + itbis
         return {
             'items_total': items_total,
@@ -548,12 +511,11 @@ class QuotationGenerator:
         doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=40, bottomMargin=40, leftMargin=36, rightMargin=36)
         story = []
         styles = getSampleStyleSheet()
-        base_font = 'Roboto' if 'Roboto' in pdfmetrics.getRegisteredFontNames() else 'Helvetica'
-        bold_font = 'Roboto-Bold' if 'Roboto-Bold' in pdfmetrics.getRegisteredFontNames() else 'Helvetica-Bold'
-        # Logo or fallback
-        logo_paths = ["assets/logo.png", "logo.png", "assets/logo.jpg", "logo.jpg"]
+        base_font = 'Helvetica'
+        bold_font = 'Helvetica-Bold'
+
         logo_added = False
-        for logo_path in logo_paths:
+        for logo_path in ["assets/logo.png", "logo.png", "assets/logo.jpg", "logo.jpg"]:
             if os.path.exists(logo_path):
                 try:
                     logo = Image(logo_path, width=1 * inch, height=0.4 * inch)
@@ -562,8 +524,9 @@ class QuotationGenerator:
                     story.append(Spacer(1, 6))
                     logo_added = True
                     break
-                except Exception as e:
-                    print(f"Logo load failed for {logo_path}: {e}")
+                except:
+                    pass
+
         if not logo_added:
             fallback_style = ParagraphStyle(
                 'FallbackHeader',
@@ -575,7 +538,7 @@ class QuotationGenerator:
             )
             story.append(Paragraph("EMPRESA CONSTRUCTORA", fallback_style))
             story.append(Spacer(1, 4))
-        # Company info
+
         company_info_style = ParagraphStyle(
             'CompanyInfo',
             fontName=base_font,
@@ -598,6 +561,7 @@ class QuotationGenerator:
         ]))
         story.append(divider)
         story.append(Spacer(1, 12))
+
         title_style = ParagraphStyle(
             'QuoteTitle',
             fontName=bold_font,
@@ -607,6 +571,7 @@ class QuotationGenerator:
             spaceAfter=12
         )
         story.append(Paragraph("ESTIMADO", title_style))
+
         info_data = [
             ['INFORMACIÓN DEL PROYECTO', ''],
             ['Cliente:', company_info['client']],
@@ -632,7 +597,7 @@ class QuotationGenerator:
         ]))
         story.append(info_table)
         story.append(Spacer(1, 16))
-        # Optional sketch
+
         if create_building_sketch:
             try:
                 sketch_img = Image(create_building_sketch, width=4 * inch, height=3 * inch)
@@ -641,7 +606,7 @@ class QuotationGenerator:
                 story.append(Spacer(1, 12))
             except Exception as e:
                 print(f"Sketch image failed: {e}")
-        # Products
+
         if show_products and products:
             products_data = [['DESCRIPCIÓN', 'CANTIDAD', 'PRECIO UNIT.', 'SUBTOTAL']]
             for p in products:
@@ -667,7 +632,7 @@ class QuotationGenerator:
             ]))
             story.append(products_table)
             story.append(Spacer(1, 16))
-        # Totals
+
         totals_data = [
             ['RESUMEN DE COSTOS', ''],
             ['Total Items:', f"${totals['items_total']:,.2f}"],
@@ -699,7 +664,7 @@ class QuotationGenerator:
          ]))
         story.append(totals_table)
         story.append(Spacer(1, 20))
-        # --- Notes (if any) ---
+
         if company_info.get('notes'):
             story.append(Spacer(1, 14))
             notes_header = Paragraph("<b>Notas:</b>", styles['Normal'])
@@ -716,7 +681,7 @@ class QuotationGenerator:
             for note in company_info['notes'].split('\n'):
                 if note.strip():
                     story.append(Paragraph(note.strip(), notes_style))
-        # --- Legal Disclaimer ---
+
         disclaimer_text = (
             "<b>Aviso legal:</b> <b>Esta cotización es solo un estimado.</b> "
             "Todos los precios están sujetos a cambios. El precio final será confirmado al momento de emitir la orden de compra. "
@@ -744,7 +709,6 @@ class QuotationGenerator:
         doc.build(story)
         buffer.seek(0)
         return buffer
-
 
 # --- MAIN APPLICATION ---
 def show_main_app():
@@ -806,11 +770,13 @@ def show_main_app():
                     st.rerun()
                 else:
                     st.sidebar.error("Nombre de empresa requerido")
+
     st.sidebar.markdown("---")
     if st.sidebar.button("🚪 Cerrar Sesión", key="logout_btn"):
         st.session_state.authenticated = False
         st.session_state.username = ""
         st.rerun()
+
     st.markdown(f"""
     <div style='text-align: center; padding: 1rem 0 2rem 0;'>
         <h1 style='
@@ -834,11 +800,13 @@ def show_main_app():
         '>Sistema de Cálculo Industrial</p>
     </div>
     """, unsafe_allow_html=True)
+
     if st.session_state.current_client_id:
         client = database.get_client_by_id(st.session_state.current_client_id)
         st.info(f"**Cliente Activo:** {client['company_name']} - {client.get('contact_name', 'Sin contacto')}")
     else:
         st.warning("⚠️ No hay cliente seleccionado. Seleccione o cree un cliente en la barra lateral.")
+
     if st.session_state.current_calculation:
         calc = st.session_state.current_calculation
         st.success(f"📂 Cálculo cargado: {calc['project_name']}")
@@ -846,7 +814,6 @@ def show_main_app():
             st.session_state.current_calculation = None
             st.rerun()
 
-    # Define tabs ONCE at the top
     tab1, tab2, tab3, tab4 = st.tabs([
         "📐 CÁLCULO DE ACERO", 
         "🧱 MATERIALES DE CIERRE", 
@@ -854,9 +821,7 @@ def show_main_app():
         "💾 GUARDAR"
     ])
 
-    # ======================================
     # TAB 1: CÁLCULO DE ACERO
-    # ======================================
     with tab1:
         st.markdown('<div class="section-header">Cálculo de Acero Estructural</div>', unsafe_allow_html=True)
         if st.session_state.get('current_calculation'):
@@ -872,6 +837,7 @@ def show_main_app():
             default_alto_lateral = 9
             default_alto_techado = 7
             default_distancia = 7.27
+
         st.markdown("### ⚙️ Configuración de la Estructura")
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
@@ -884,15 +850,18 @@ def show_main_app():
             alto_techado = st.number_input("Altura Techado (m)", min_value=5.0, max_value=25.0, value=float(default_alto_techado), step=0.1, key="steel_alto_techado")
         with col5:
             distancia = st.number_input("Distancia entre Ejes (m)", min_value=0.1, value=float(default_distancia), step=0.01, key="steel_distancia")
-        if alto_techado > alto_lateral:
+
+        if alto_techado < alto_lateral:
             st.warning("⚠️ La altura del techado debe ser mayor o igual a la altura lateral.")
             st.stop()
+
         st.markdown("### 🔧 Selección de Perfiles")
         default_columna = "W12x136"
         default_tijerilla = "W14x159"
         default_portico = "W16x100"
         default_correa = "C10x25"
         default_lateral = "W12x87"
+
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("**Perfiles Principales**")
@@ -937,6 +906,7 @@ def show_main_app():
             with col2b:
                 incluir_laterales = st.checkbox("Incluir Columnas Laterales", value=True, key="include_lateral")
                 st.info("Columnas Laterales: (L÷D+1)×Lados×H×Peso×3.28")
+
         with st.expander("📊 Ver Pesos de Perfiles Seleccionados"):
             col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
@@ -949,6 +919,7 @@ def show_main_app():
                 st.metric("Correas", f"{profile_weights[correas]} lbs/ft")
             with col5:
                 st.metric("Laterales", f"{profile_weights[columnas_laterales]} lbs/ft")
+
         if st.button("🔩 CALCULAR ESTRUCTURA COMPLETA", type="primary", key="calc_steel_btn"):
             try:
                 peso_columnas = profile_weights[columnas]
@@ -956,19 +927,24 @@ def show_main_app():
                 peso_porticos = profile_weights[porticos]
                 peso_laterales = profile_weights[columnas_laterales]
                 peso_correas = profile_weights[correas]
+
                 num_ejes = int((largo / distancia) + 1)
                 num_columnas = num_ejes * 2
                 libras_columnas = num_columnas * alto_lateral * peso_columnas * 3.28
                 ton_columnas = libras_columnas / 2204.62
+
                 num_tijerillas_calc = num_ejes * 2
                 libras_tijerillas = num_tijerillas_calc * 1.1 * ancho * peso_tijerillas * 3.28
                 ton_tijerillas = libras_tijerillas / 2204.62
+
                 perimetro = (ancho * 2) + (largo * 2)
                 libras_porticos = perimetro * peso_porticos * 3.28
                 ton_porticos = libras_porticos / 2204.62
+
                 num_columnas_frontales = int((ancho / distancia) + 1) * 2
                 libras_columnas_frontales = num_columnas_frontales * alto_lateral * 1.1 * 3.28 * peso_columnas
                 ton_columnas_frontales = libras_columnas_frontales / 2204.62
+
                 if incluir_laterales:
                     num_columnas_laterales = int((largo / distancia) + 1) * num_lados
                     libras_columnas_laterales = num_columnas_laterales * alto_lateral * peso_laterales * 3.28
@@ -977,20 +953,25 @@ def show_main_app():
                     num_columnas_laterales = 0
                     libras_columnas_laterales = 0
                     ton_columnas_laterales = 0
+
                 correas_techo = int((largo / 1.5) * (num_ejes * 2))
                 correas_pared = int(((alto_lateral / 1.5) * num_ejes * 2) + ((alto_lateral / 1.5) * 4))
                 total_correas = correas_techo + correas_pared
                 libras_correas = total_correas * 6 * peso_correas * 3.28
                 ton_correas = libras_correas / 2204.62
+
                 total_libras = (libras_columnas + libras_tijerillas + libras_porticos + 
                                libras_columnas_frontales + libras_columnas_laterales + libras_correas)
                 libras_conexiones = total_libras * 0.15
                 ton_conexiones = libras_conexiones / 2204.62
+
                 cantidad_pernos = num_ejes * 2
                 tornillos_3_4 = int(libras_conexiones / 5)
+
                 total_ton = (ton_columnas + ton_tijerillas + ton_porticos + 
                             ton_columnas_frontales + ton_columnas_laterales + 
                             ton_correas + ton_conexiones)
+
                 st.session_state.last_steel_calc = {
                     'num_ejes': num_ejes,
                     'num_columnas': num_columnas,
@@ -1017,6 +998,7 @@ def show_main_app():
                     'alto_lateral': alto_lateral,
                     'alto_techado': alto_techado
                 }
+
                 st.success("✅ Cálculo de Acero Estructural Completado Exitosamente")
                 st.markdown("### 📊 RESULTADOS DEL CÁLCULO ESTRUCTURAL")
                 col1, col2, col3, col4 = st.columns(4)
@@ -1041,6 +1023,7 @@ def show_main_app():
                             <div style="font-size: 12px; color: rgba(255, 255, 255, 0.6);">ton</div>
                         </div>
                         """, unsafe_allow_html=True)
+
                 st.markdown("### ⚖️ RESUMEN DE PESOS (TONELADAS)")
                 weights_df = pd.DataFrame({
                     'Componente': ['Columnas Principales', 'Columnas Frontales', 'Columnas Laterales', 
@@ -1059,11 +1042,13 @@ def show_main_app():
                     ]
                 })
                 st.dataframe(weights_df, use_container_width=True, hide_index=True)
+
                 col1, col2 = st.columns(2)
                 with col1:
                     st.info(f"🔩 **Pernos de Anclaje Requeridos:** {cantidad_pernos} unidades")
                 with col2:
                     st.info(f"🔧 **Tornillos 3/4\" Estimados:** {tornillos_3_4:,} unidades")
+
                 lateral_text = f" | Laterales: {ton_columnas_laterales:,.2f}" if incluir_laterales else ""
                 st.markdown(f"""
                 <div class="result-card">
@@ -1087,9 +1072,7 @@ def show_main_app():
                 st.error(f"❌ Error en el cálculo: {str(e)}")
                 st.info("Verifica que todos los perfiles tengan pesos definidos en el diccionario profile_weights")
 
-    # ======================================
     # TAB 2: MATERIALES DE CIERRE
-    # ======================================
     with tab2:
         st.markdown("### 📏 Dimensiones de la Nave")
         col1, col2, col3, col4 = st.columns(4)
@@ -1104,6 +1087,7 @@ def show_main_app():
             default_ancho_mat = 20
             default_alto_lateral_mat = 6
             default_alto_techado_mat = 8
+
         with col1:
             largo_mat = st.number_input("Largo (m)", min_value=5, max_value=200, value=default_largo_mat, 
                                        step=1, key="largo_mat")
@@ -1116,6 +1100,7 @@ def show_main_app():
         with col4:
             alto_techado_mat = st.number_input("Alto Techado (m)", min_value=4, max_value=25, 
                                               value=default_alto_techado_mat, step=1, key="alto_techado_mat")
+
         if st.button("🔧 CALCULAR MATERIALES", type="primary", key="calc_materials"):
             materials = calculate_materials(largo_mat, ancho_mat, alto_lateral_mat, alto_techado_mat)
             st.session_state.last_materials_calc = materials
@@ -1149,13 +1134,9 @@ def show_main_app():
             </div>
             """, unsafe_allow_html=True)
 
-    # ======================================
     # TAB 3: COTIZACIÓN
-    # ======================================
-
     with tab3:
         st.markdown("### 📝 INFORMACIÓN DE LA EMPRESA")
-        
         col1, col2, col3 = st.columns(3)
         with col1:
             company_name = st.text_input("Nombre de Empresa", value="RIGC INDUSTRIAL", key="company_name")
@@ -1165,9 +1146,8 @@ def show_main_app():
             quoted_by = st.text_input("Cotizado por", value=st.session_state.username, key="quoted_by")
         with col3:
             quote_validity = st.number_input("Validez (días)", value=30, min_value=1, key="quote_validity")
-        
+
         st.markdown("### 👤 INFORMACIÓN DEL CLIENTE")
-        
         col1, col2 = st.columns(2)
         with col1:
             if st.session_state.current_client_id:
@@ -1177,12 +1157,10 @@ def show_main_app():
                 client_name = st.text_input("Cliente", placeholder="Nombre del cliente", key="client_name")
         with col2:
             project_name = st.text_input("Proyecto", placeholder="Nombre del proyecto", key="project_name")
-        
+
         notes = st.text_area("Notas adicionales", placeholder="Condiciones especiales, observaciones...", key="notes")
-        
-        # Product management
+
         st.markdown("### 📦 GESTIÓN DE PRODUCTOS")
-        
         col1, col2 = st.columns(2)
         with col1:
             if st.button("📥 Importar desde Cálculo de Acero", key="import_steel"):
@@ -1190,27 +1168,26 @@ def show_main_app():
                     calc = st.session_state.last_steel_calc
                     steel_products = [
                         {"product_name": "Estructura de Acero - Columnas", 
-                         "quantity": calc['peso_columnas'], "unit_price": 1200.0,
-                         "subtotal": calc['peso_columnas'] * 1200.0},
-                        {"product_name": "Estructura de Acero - Vigas", 
-                         "quantity": calc['peso_vigas'], "unit_price": 1200.0,
-                         "subtotal": calc['peso_vigas'] * 1200.0},
-                        {"product_name": "Estructura de Acero - Correas", 
-                         "quantity": calc['peso_correas'], "unit_price": 1200.0,
-                         "subtotal": calc['peso_correas'] * 1200.0},
+                         "quantity": calc['ton_columnas'], "unit_price": 1200.0,
+                         "subtotal": calc['ton_columnas'] * 1200.0},
                         {"product_name": "Estructura de Acero - Tijerillas", 
-                         "quantity": calc['peso_tijerillas'], "unit_price": 1200.0,
-                         "subtotal": calc['peso_tijerillas'] * 1200.0},
+                         "quantity": calc['ton_tijerillas'], "unit_price": 1200.0,
+                         "subtotal": calc['ton_tijerillas'] * 1200.0},
+                        {"product_name": "Estructura de Acero - Correas", 
+                         "quantity": calc['ton_correas'], "unit_price": 1200.0,
+                         "subtotal": calc['ton_correas'] * 1200.0},
+                        {"product_name": "Estructura de Acero - Pórticos", 
+                         "quantity": calc['ton_porticos'], "unit_price": 1200.0,
+                         "subtotal": calc['ton_porticos'] * 1200.0},
                         {"product_name": "Conexiones y Accesorios", 
-                         "quantity": calc['peso_conexiones'], "unit_price": 1500.0,
-                         "subtotal": calc['peso_conexiones'] * 1500.0}
+                         "quantity": calc['ton_conexiones'], "unit_price": 1500.0,
+                         "subtotal": calc['ton_conexiones'] * 1500.0}
                     ]
                     st.session_state.quote_products.extend(steel_products)
                     st.success("✅ Productos de acero importados")
                     st.rerun()
                 else:
                     st.warning("⚠️ No hay cálculo de acero disponible")
-        
         with col2:
             if st.button("📥 Importar desde Materiales", key="import_materials"):
                 if st.session_state.last_materials_calc:
@@ -1237,8 +1214,7 @@ def show_main_app():
                     st.rerun()
                 else:
                     st.warning("⚠️ No hay cálculo de materiales disponible")
-        
-        # Manual product entry
+
         st.markdown("#### ➕ Agregar Producto Manual")
         with st.form("add_product_form", clear_on_submit=True):
             col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
@@ -1252,7 +1228,6 @@ def show_main_app():
                 st.write("")
                 st.write("")
                 add_product = st.form_submit_button("➕")
-            
             if add_product:
                 if new_product_name and new_quantity > 0 and new_unit_price > 0:
                     new_product = {
@@ -1265,24 +1240,17 @@ def show_main_app():
                     st.success(f"Producto '{new_product_name}' agregado")
                 else:
                     st.error("Complete todos los campos")
-        
-        # Display current products
+
         if st.session_state.quote_products:
             st.markdown("### Productos en la Cotización")
-            
             products_df = pd.DataFrame(st.session_state.quote_products)
-            
-            # Ensure columns exist
             for col in ['product_name', 'quantity', 'unit_price', 'subtotal']:
                 if col not in products_df.columns:
                     products_df[col] = 0.0 if col != 'product_name' else ''
-            
-            # Convert types
             products_df['quantity'] = pd.to_numeric(products_df['quantity'], errors='coerce').fillna(0)
             products_df['unit_price'] = pd.to_numeric(products_df['unit_price'], errors='coerce').fillna(0)
             products_df['subtotal'] = products_df['quantity'] * products_df['unit_price']
-            
-            # Show editable table
+
             edited_df = st.data_editor(
                 products_df,
                 column_config={
@@ -1295,45 +1263,34 @@ def show_main_app():
                 use_container_width=True,
                 num_rows="dynamic"
             )
-            
-            # Update session state with edited data
+
             if not edited_df.empty:
                 valid_products = edited_df[
                     (edited_df['product_name'].notna()) & 
                     (edited_df['product_name'] != '') &
                     (edited_df['quantity'] > 0)
                 ].copy()
-                
                 valid_products['quantity'] = valid_products['quantity'].astype(float)
                 valid_products['unit_price'] = valid_products['unit_price'].astype(float)
                 valid_products['subtotal'] = valid_products['quantity'] * valid_products['unit_price']
-                
                 st.session_state.quote_products = valid_products.to_dict('records')
-            
-            # Clear products button
+
             if st.button("🔄 Limpiar Productos"):
                 st.session_state.quote_products = []
                 st.rerun()
-            
-            # Calculate totals
+
             if st.session_state.quote_products:
                 totals = QuotationGenerator.calculate_quote(st.session_state.quote_products)
-                
-                # Display totals
                 st.markdown("### Resumen de Costos")
-                
                 col1, col2, col3 = st.columns(3)
-                
                 with col1:
                     st.metric("Total Items", f"${totals['items_total']:,.2f}")
                     st.metric("Supervisión (10%)", f"${totals['supervision']:,.2f}")
                     st.metric("Admin. (4%)", f"${totals['admin']:,.2f}")
-                
                 with col2:
                     st.metric("Seguro (1%)", f"${totals['insurance']:,.2f}")
                     st.metric("Transporte (3%)", f"${totals['transport']:,.2f}")
                     st.metric("Imprevisto (3%)", f"${totals['contingency']:,.2f}")
-                
                 with col3:
                     st.metric("Subtotal", f"${totals['subtotal_general']:,.2f}")
                     st.metric("ITBIS (18%)", f"${totals['itbis']:,.2f}")
@@ -1345,16 +1302,13 @@ def show_main_app():
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
-                
-                # Generate PDF button
+
                 st.markdown("### Generar Cotización")
-                
                 col1, col2 = st.columns(2)
                 with col1:
                     show_products_in_pdf = st.checkbox("Mostrar productos en PDF", value=True)
                 with col2:
                     include_sketch = st.checkbox("Incluir diagrama 2D", value=True)
-                
                 if st.button("📄 Generar PDF", type="primary"):
                     try:
                         company_info = {
@@ -1367,17 +1321,16 @@ def show_main_app():
                             'quoted_by': quoted_by,
                             'notes': notes
                         }
-                        
                         sketch_buffer = None
                         if include_sketch and st.session_state.last_steel_calc:
                             calc = st.session_state.last_steel_calc
-                            sketch_buffer = create_building_sketch(
-                                calc.get('largo', 80),
-                                calc.get('ancho', 25),
-                                calc.get('alto_lateral', 9),
-                                calc.get('alto_techado', 12)
-                            )
-                        
+                            sketch_buffer = create_building_sketch({
+                                'length': calc.get('largo', 80),
+                                'width': calc.get('ancho', 25),
+                                'wall_height': calc.get('alto_lateral', 9),
+                                'roof_height': calc.get('alto_techado', 12) - calc.get('alto_lateral', 9)
+                            })
+
                         pdf_buffer = QuotationGenerator.generate_pdf(
                             quote_data={},
                             company_info=company_info,
@@ -1386,50 +1339,38 @@ def show_main_app():
                             show_products=show_products_in_pdf,
                             create_building_sketch=sketch_buffer
                         )
-                        
                         st.download_button(
                             label="📥 Descargar PDF",
                             data=pdf_buffer.getvalue(),
                             file_name=f"cotizacion_{datetime.now().strftime('%Y%m%d')}.pdf",
                             mime="application/pdf"
                         )
-                        
                         st.success("✅ Cotización generada")
-                        
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
-        
         else:
             st.info("No hay productos en la cotización")
 
-    # ======================================
     # TAB 4: GUARDAR CÁLCULO
-    # ======================================
     with tab4:
         st.markdown("### 💾 GUARDAR CÁLCULO")
-
         if st.session_state.current_client_id:
             client = database.get_client_by_id(st.session_state.current_client_id)
             st.info(f"**Cliente:** {client['company_name']}")
-
             has_steel = bool(st.session_state.get('last_steel_calc'))
             has_materials = bool(st.session_state.get('last_materials_calc'))
-
             if has_steel or has_materials:
                 with st.form("save_calculation_form"):
                     project_save_name = st.text_input(
                         "Nombre del Proyecto",
                         value=st.session_state.get("project_name", "")
                     )
-
                     calc_type = st.selectbox(
                         "Tipo de Cálculo a Guardar",
                         ["Ambos (Acero + Materiales)", "Solo Acero", "Solo Materiales"]
                     )
-
                     total_amount = st.number_input("Monto Total (opcional)", value=0.0, min_value=0.0)
                     save_notes = st.text_area("Notas del Cálculo")
-
                     if st.form_submit_button("💾 Guardar en Base de Datos", type="primary"):
                         try:
                             if calc_type == "Ambos (Acero + Materiales)":
@@ -1444,7 +1385,6 @@ def show_main_app():
                                 else:
                                     st.error("Faltan cálculos. Realice ambos cálculos primero.")
                                     st.stop()
-
                             elif calc_type == "Solo Acero":
                                 if has_steel:
                                     steel = st.session_state.last_steel_calc
@@ -1456,7 +1396,6 @@ def show_main_app():
                                 else:
                                     st.error("No hay cálculo de acero disponible")
                                     st.stop()
-
                             else:  # Solo Materiales
                                 if has_materials:
                                     materials = st.session_state.last_materials_calc
@@ -1479,13 +1418,10 @@ def show_main_app():
                                 materials_dict=combined_data,
                                 total_amount=total_amount
                             )
-
                             st.success(f"✅ Cálculo guardado exitosamente: {project_save_name}")
                             st.balloons()
-
                         except Exception as e:
                             st.error(f"❌ Error al guardar: {str(e)}")
-
                 st.markdown("### 📋 Cálculos Guardados del Cliente")
                 calculations = database.get_client_calculations(st.session_state.current_client_id)
                 if calculations:
@@ -1495,13 +1431,11 @@ def show_main_app():
                     st.dataframe(calc_df, use_container_width=True)
                 else:
                     st.info("No hay cálculos guardados para este cliente")
-
             else:
                 st.warning("⚠️ No hay cálculos disponibles para guardar. Realice un cálculo primero.")
         else:
             st.error("❌ Debe seleccionar un cliente antes de guardar un cálculo")
-    
-    # Footer
+
     st.markdown("---")
     st.markdown("""
     <div style="
@@ -1525,5 +1459,3 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
-
-
