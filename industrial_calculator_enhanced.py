@@ -65,11 +65,10 @@ LABOR_RATES = {
 }
 
 def create_building_sketch(dimensions):
-    # Accept a single dict
     length = dimensions.get('length', 20.0)
     width = dimensions.get('width', 15.0)
     wall_height = dimensions.get('wall_height', 4.0)
-    roof_rise = dimensions.get('roof_height', 2.0)
+    roof_rise = dimensions.get('roof_height', 2.0)  # This is the *rise*, not total height
     total_height = wall_height + roof_rise
     area = length * width
 
@@ -302,7 +301,6 @@ st.markdown("""
 
 # Steel profile weights (lbs/ft)
 profile_weights = {
-    # ... (keep all your profile_weights as-is – omitted here for brevity but must be included)
     "W12x136": 136, "W12x120": 120, "W12x106": 106, "W12x96": 96, "W12x87": 87,
     "W12x79": 79, "W12x72": 72, "W12x65": 65, "W12x58": 58, "W12x53": 53,
     "W12x50": 50, "W12x45": 45, "W12x40": 40, "W12x35": 35, "W12x30": 30,
@@ -383,7 +381,7 @@ def sort_profiles(profiles):
     sorted_profiles = []
     for prefix in profile_types:
         type_profiles = [p for p in profiles if p.startswith(prefix)]
-        type_profiles.sort(key=lambda x: profile_weights[x], reverse=True)
+        type_profiles.sort(key=lambda x: profile_weights.get(x, 0), reverse=True)
         sorted_profiles.extend(type_profiles)
     remaining = [p for p in profiles if p not in sorted_profiles]
     sorted_profiles.extend(remaining)
@@ -513,7 +511,6 @@ class QuotationGenerator:
         styles = getSampleStyleSheet()
         base_font = 'Helvetica'
         bold_font = 'Helvetica-Bold'
-
         logo_added = False
         for logo_path in ["assets/logo.png", "logo.png", "assets/logo.jpg", "logo.jpg"]:
             if os.path.exists(logo_path):
@@ -526,7 +523,6 @@ class QuotationGenerator:
                     break
                 except:
                     pass
-
         if not logo_added:
             fallback_style = ParagraphStyle(
                 'FallbackHeader',
@@ -538,7 +534,6 @@ class QuotationGenerator:
             )
             story.append(Paragraph("EMPRESA CONSTRUCTORA", fallback_style))
             story.append(Spacer(1, 4))
-
         company_info_style = ParagraphStyle(
             'CompanyInfo',
             fontName=base_font,
@@ -561,7 +556,6 @@ class QuotationGenerator:
         ]))
         story.append(divider)
         story.append(Spacer(1, 12))
-
         title_style = ParagraphStyle(
             'QuoteTitle',
             fontName=bold_font,
@@ -571,7 +565,6 @@ class QuotationGenerator:
             spaceAfter=12
         )
         story.append(Paragraph("ESTIMADO", title_style))
-
         info_data = [
             ['INFORMACIÓN DEL PROYECTO', ''],
             ['Cliente:', company_info['client']],
@@ -597,7 +590,6 @@ class QuotationGenerator:
         ]))
         story.append(info_table)
         story.append(Spacer(1, 16))
-
         if create_building_sketch:
             try:
                 sketch_img = Image(create_building_sketch, width=4 * inch, height=3 * inch)
@@ -606,7 +598,6 @@ class QuotationGenerator:
                 story.append(Spacer(1, 12))
             except Exception as e:
                 print(f"Sketch image failed: {e}")
-
         if show_products and products:
             products_data = [['DESCRIPCIÓN', 'CANTIDAD', 'PRECIO UNIT.', 'SUBTOTAL']]
             for p in products:
@@ -632,7 +623,6 @@ class QuotationGenerator:
             ]))
             story.append(products_table)
             story.append(Spacer(1, 16))
-
         totals_data = [
             ['RESUMEN DE COSTOS', ''],
             ['Total Items:', f"${totals['items_total']:,.2f}"],
@@ -664,7 +654,6 @@ class QuotationGenerator:
          ]))
         story.append(totals_table)
         story.append(Spacer(1, 20))
-
         if company_info.get('notes'):
             story.append(Spacer(1, 14))
             notes_header = Paragraph("<b>Notas:</b>", styles['Normal'])
@@ -681,7 +670,6 @@ class QuotationGenerator:
             for note in company_info['notes'].split('\n'):
                 if note.strip():
                     story.append(Paragraph(note.strip(), notes_style))
-
         disclaimer_text = (
             "<b>Aviso legal:</b> <b>Esta cotización es solo un estimado.</b> "
             "Todos los precios están sujetos a cambios. El precio final será confirmado al momento de emitir la orden de compra. "
@@ -770,7 +758,6 @@ def show_main_app():
                     st.rerun()
                 else:
                     st.sidebar.error("Nombre de empresa requerido")
-
     st.sidebar.markdown("---")
     if st.sidebar.button("🚪 Cerrar Sesión", key="logout_btn"):
         st.session_state.authenticated = False
@@ -910,23 +897,27 @@ def show_main_app():
         with st.expander("📊 Ver Pesos de Perfiles Seleccionados"):
             col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
-                st.metric("Columnas", f"{profile_weights[columnas]} lbs/ft")
+                st.metric("Columnas", f"{profile_weights.get(columnas, 0)} lbs/ft")
             with col2:
-                st.metric("Tijerillas", f"{profile_weights[tijerillas]} lbs/ft")
+                st.metric("Tijerillas", f"{profile_weights.get(tijerillas, 0)} lbs/ft")
             with col3:
-                st.metric("Pórticos", f"{profile_weights[porticos]} lbs/ft")
+                st.metric("Pórticos", f"{profile_weights.get(porticos, 0)} lbs/ft")
             with col4:
-                st.metric("Correas", f"{profile_weights[correas]} lbs/ft")
+                st.metric("Correas", f"{profile_weights.get(correas, 0)} lbs/ft")
             with col5:
-                st.metric("Laterales", f"{profile_weights[columnas_laterales]} lbs/ft")
+                st.metric("Laterales", f"{profile_weights.get(columnas_laterales, 0)} lbs/ft")
 
         if st.button("🔩 CALCULAR ESTRUCTURA COMPLETA", type="primary", key="calc_steel_btn"):
             try:
-                peso_columnas = profile_weights[columnas]
-                peso_tijerillas = profile_weights[tijerillas]
-                peso_porticos = profile_weights[porticos]
-                peso_laterales = profile_weights[columnas_laterales]
-                peso_correas = profile_weights[correas]
+                peso_columnas = profile_weights.get(columnas, 0)
+                peso_tijerillas = profile_weights.get(tijerillas, 0)
+                peso_porticos = profile_weights.get(porticos, 0)
+                peso_laterales = profile_weights.get(columnas_laterales, 0)
+                peso_correas = profile_weights.get(correas, 0)
+
+                if any(w == 0 for w in [peso_columnas, peso_tijerillas, peso_porticos, peso_correas]):
+                    st.error("Uno o más perfiles no tienen peso definido. Revise el diccionario `profile_weights`.")
+                    st.stop()
 
                 num_ejes = int((largo / distancia) + 1)
                 num_columnas = num_ejes * 2
@@ -964,10 +955,8 @@ def show_main_app():
                                libras_columnas_frontales + libras_columnas_laterales + libras_correas)
                 libras_conexiones = total_libras * 0.15
                 ton_conexiones = libras_conexiones / 2204.62
-
                 cantidad_pernos = num_ejes * 2
                 tornillos_3_4 = int(libras_conexiones / 5)
-
                 total_ton = (ton_columnas + ton_tijerillas + ton_porticos + 
                             ton_columnas_frontales + ton_columnas_laterales + 
                             ton_correas + ton_conexiones)
@@ -1250,7 +1239,6 @@ def show_main_app():
             products_df['quantity'] = pd.to_numeric(products_df['quantity'], errors='coerce').fillna(0)
             products_df['unit_price'] = pd.to_numeric(products_df['unit_price'], errors='coerce').fillna(0)
             products_df['subtotal'] = products_df['quantity'] * products_df['unit_price']
-
             edited_df = st.data_editor(
                 products_df,
                 column_config={
@@ -1263,7 +1251,6 @@ def show_main_app():
                 use_container_width=True,
                 num_rows="dynamic"
             )
-
             if not edited_df.empty:
                 valid_products = edited_df[
                     (edited_df['product_name'].notna()) & 
@@ -1328,7 +1315,7 @@ def show_main_app():
                                 'length': calc.get('largo', 80),
                                 'width': calc.get('ancho', 25),
                                 'wall_height': calc.get('alto_lateral', 9),
-                                'roof_height': calc.get('alto_techado', 12) - calc.get('alto_lateral', 9)
+                                'roof_height': max(0, calc.get('alto_techado', 12) - calc.get('alto_lateral', 9))
                             })
 
                         pdf_buffer = QuotationGenerator.generate_pdf(
@@ -1422,6 +1409,7 @@ def show_main_app():
                             st.balloons()
                         except Exception as e:
                             st.error(f"❌ Error al guardar: {str(e)}")
+
                 st.markdown("### 📋 Cálculos Guardados del Cliente")
                 calculations = database.get_client_calculations(st.session_state.current_client_id)
                 if calculations:
@@ -1459,3 +1447,4 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
+
