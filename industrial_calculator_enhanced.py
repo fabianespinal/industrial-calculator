@@ -14,6 +14,9 @@ from reportlab.lib.enums import TA_RIGHT
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import os
+import re
+import math
+from math import sqrt
 
 # Page configuration - MUST BE FIRST STREAMLIT COMMAND
 st.set_page_config(
@@ -149,21 +152,20 @@ def create_building_sketch(dimensions):
 # CSS Styling
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 :root {
-    --primary-neon: #00ffff;
-    --secondary-neon: #ff00ff;
-    --accent-neon: #ffff00;
-    --dark-bg: #0a0a0a;
-    --card-bg: rgba(15, 15, 25, 0.95);
-    --gradient-primary: linear-gradient(135deg, #00ffff 0%, #0099ff 50%, #ff00ff 100%);
-    --gradient-secondary: linear-gradient(135deg, #ff00ff 0%, #ff6600 50%, #ffff00 100%);
-    --shadow-glow: 0 0 30px rgba(0, 255, 255, 0.3);
+    --primary: #5e64ff;
+    --text-color: #333333;
+    --text-muted: #6c757d;
+    --bg-color: #ffffff;
+    --card-bg: #f8f9fa;
+    --border-color: #dee2e6;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 .main, .stApp {
-    background: radial-gradient(circle at 20% 50%, #1a0033 0%, #000000 50%, #001a33 100%);
-    color: #ffffff;
-    font-family: 'Space Grotesk', sans-serif;
+    background: var(--bg-color);
+    color: var(--text-color);
+    font-family: 'Inter', sans-serif;
     min-height: 100vh;
 }
 #MainMenu, footer, header { visibility: hidden; }
@@ -173,134 +175,136 @@ st.markdown("""
     margin: 5rem auto;
     padding: 3rem;
     background: var(--card-bg);
-    border: 2px solid rgba(0, 255, 255, 0.3);
-    border-radius: 30px;
-    backdrop-filter: blur(25px);
-    box-shadow: var(--shadow-glow);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
 }
 .login-title {
     text-align: center;
-    font-size: 48px;
-    font-weight: 800;
+    font-size: 32px;
+    font-weight: 600;
     margin-bottom: 1rem;
-    background: var(--gradient-primary);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--primary);
     text-transform: uppercase;
-    letter-spacing: 3px;
+    letter-spacing: 1px;
 }
 .stTextInput > div > div > input {
-    background: rgba(0, 0, 0, 0.5) !important;
-    color: white !important;
-    border: 2px solid rgba(0, 255, 255, 0.3) !important;
-    border-radius: 15px !important;
-    padding: 12px 20px !important;
-    font-size: 16px !important;
+    background: var(--bg-color) !important;
+    color: var(--text-color) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 4px !important;
+    padding: 10px 15px !important;
+    font-size: 14px !important;
     transition: all 0.3s ease !important;
 }
 .stTextInput > div > div > input:focus {
-    border-color: var(--primary-neon) !important;
-    box-shadow: 0 0 20px rgba(0, 255, 255, 0.5) !important;
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px rgba(94, 100, 255, 0.1) !important;
 }
 .stButton > button {
-    background-color: #f0f2f6 !important;
-    color: black !important;
-    border: 1px solid #ced4da !important;
-    font-weight: normal !important;
+    background-color: var(--primary) !important;
+    color: white !important;
+    border: none !important;
+    font-weight: 500 !important;
     padding: 8px 24px !important;
     border-radius: 4px !important;
     font-size: 14px !important;
     text-transform: none !important;
     letter-spacing: normal !important;
     box-shadow: none !important;
-    transition: none !important;
+    transition: all 0.3s ease !important;
 }
 .stButton > button:hover {
-    transform: translateY(-3px) !important;
-    box-shadow: 0 5px 35px rgba(0, 255, 255, 0.6) !important;
+    background-color: #4a50e6 !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 2px 5px rgba(94, 100, 255, 0.2) !important;
 }
 .stTabs [data-baseweb="tab-list"] {
     background: var(--card-bg);
-    border: 1px solid rgba(0, 255, 255, 0.3);
-    border-radius: 25px;
-    padding: 8px;
-    gap: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 4px;
+    gap: 8px;
     justify-content: center;
-    backdrop-filter: blur(15px);
 }
 .stTabs [data-baseweb="tab"] {
     background: transparent;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--text-muted);
     border: 1px solid transparent;
-    padding: 10px 20px;
-    border-radius: 18px;
-    font-weight: 600;
-    font-size: 15px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 500;
+    font-size: 14px;
     transition: all 0.3s ease;
 }
 .stTabs [data-baseweb="tab"]:hover {
-    background: rgba(0, 255, 255, 0.1);
-    border-color: rgba(0, 255, 255, 0.3);
-    color: var(--primary-neon);
+    background: rgba(94, 100, 255, 0.05);
+    border-color: var(--border-color);
+    color: var(--primary);
 }
 .stTabs [aria-selected="true"] {
-    background: linear-gradient(135deg, rgba(0, 255, 255, 0.2), rgba(0, 153, 255, 0.2)) !important;
-    border: 1px solid var(--primary-neon) !important;
-    color: var(--primary-neon) !important;
-    box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+    background: rgba(94, 100, 255, 0.1) !important;
+    border: 1px solid var(--primary) !important;
+    color: var(--primary) !important;
 }
 .result-card {
     background: var(--card-bg);
-    border: 2px solid rgba(0, 255, 255, 0.3);
-    border-radius: 20px;
-    padding: 2rem;
-    margin: 1.5rem 0;
-    box-shadow: var(--shadow-glow);
-    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin: 1rem 0;
+    box-shadow: var(--shadow);
     text-align: center;
 }
 .metric-card {
-    background: linear-gradient(135deg, rgba(0, 255, 255, 0.1), rgba(0, 153, 255, 0.1));
-    border: 1px solid rgba(0, 255, 255, 0.3);
-    border-radius: 15px;
-    padding: 1.5rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
     margin: 0.5rem 0;
     text-align: center;
 }
 .stSelectbox > div > div {
-    background: rgba(0, 0, 0, 0.5) !important;
-    border: 2px solid rgba(0, 255, 255, 0.3) !important;
-    border-radius: 15px !important;
+    background: var(--bg-color) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 4px !important;
 }
 .stNumberInput > div > div > input {
-    background: rgba(0, 0, 0, 0.5) !important;
-    color: white !important;
-    border: 2px solid rgba(0, 255, 255, 0.3) !important;
-    border-radius: 15px !important;
+    background: var(--bg-color) !important;
+    color: var(--text-color) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 4px !important;
 }
 .stDataFrame {
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(0, 255, 255, 0.3);
-    border-radius: 15px;
-    padding: 10px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 8px;
 }
 [data-testid="stMetricValue"] {
-    color: var(--primary-neon);
-    font-size: 32px;
-    font-weight: 700;
+    color: var(--primary);
+    font-size: 28px;
+    font-weight: 600;
 }
 [data-testid="stMetricLabel"] {
-    color: rgba(255, 255, 255, 0.8);
-    font-size: 14px;
-    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # Steel profile weights (lbs/ft)
 profile_weights = {
+    "W4x13": 13, "W5x16": 16, "W5x19": 19,
+    "W6x9": 9, "W6x12": 12, "W6x15": 15, "W6x16": 16, "W6x20": 20, "W6x25": 25,
+    "W8x10": 10, "W8x13": 13, "W8x15": 15, "W8x18": 18, "W8x21": 21, "W8x24": 24,
+    "W8x28": 28, "W8x31": 31, "W8x35": 35, "W8x40": 40, "W8x48": 48, "W8x58": 58, "W8x67": 67,
+    "W10x12": 12, "W10x15": 15, "W10x17": 17, "W10x19": 19, "W10x22": 22, "W10x26": 26,
+    "W10x30": 30, "W10x33": 33, "W10x39": 39, "W10x45": 45, "W10x49": 49, "W10x54": 54,
+    "W10x60": 60, "W10x68": 68, "W10x77": 77, "W10x88": 88, "W10x100": 100, "W10x112": 112,
     "W12x136": 136, "W12x120": 120, "W12x106": 106, "W12x96": 96, "W12x87": 87,
     "W12x79": 79, "W12x72": 72, "W12x65": 65, "W12x58": 58, "W12x53": 53,
     "W12x50": 50, "W12x45": 45, "W12x40": 40, "W12x35": 35, "W12x30": 30,
@@ -342,15 +346,23 @@ profile_weights = {
     "C15x50": 50, "C15x40": 40, "C15x33.9": 33.9,
     "C12x30": 30, "C12x25": 25, "C12x20.7": 20.7,
     "C10x30": 30, "C10x25": 25, "C10x20": 20, "C10x15.3": 15.3,
+    "C9x20": 20, "C9x15": 15, "C9x13.4": 13.4,
     "C8x18.75": 18.75, "C8x13.75": 13.75, "C8x11.5": 11.5,
+    "C7x14.75": 14.75, "C7x12.25": 12.25, "C7x9.8": 9.8,
     "C6x13": 13, "C6x10.5": 10.5, "C6x8.2": 8.2,
+    "C5x9": 9, "C5x6.7": 6.7,
     "C4x7.25": 7.25, "C4x6.25": 6.25, "C4x5.4": 5.4,
     "C3x6": 6, "C3x5": 5, "C3x4.1": 4.1, "C3x3.5": 3.5,
     "MC18x58": 58, "MC18x51.9": 51.9, "MC18x45.8": 45.8, "MC18x42.7": 42.7,
+    "MC13x50": 50, "MC13x40": 40, "MC13x35": 35, "MC13x31.8": 31.8,
     "MC12x50": 50, "MC12x45": 45, "MC12x40": 40, "MC12x35": 35, "MC12x31": 31,
     "MC12x14.3": 14.3, "MC12x10.6": 10.6,
     "MC10x41.1": 41.1, "MC10x33.6": 33.6, "MC10x28.5": 28.5, "MC10x25": 25, "MC10x22": 22,
     "MC10x8.4": 8.4, "MC10x6.5": 6.5,
+    "MC9x25.4": 25.4, "MC9x23.9": 23.9,
+    "MC8x22.8": 22.8, "MC8x21.4": 21.4, "MC8x20": 20, "MC8x18.7": 18.7, "MC8x8.5": 8.5,
+    "MC7x22.7": 22.7, "MC7x19.1": 19.1, "MC7x17.6": 17.6,
+    "MC6x18": 18, "MC6x16.3": 16.3, "MC6x15.3": 15.3, "MC6x15.1": 15.1, "MC6x12": 12,
     "L8x8x1": 51.0, "L8x8x3/4": 38.9, "L8x8x5/8": 32.7, "L8x8x1/2": 26.4,
     "L6x6x3/4": 28.7, "L6x6x5/8": 24.2, "L6x6x1/2": 19.6, "L6x6x3/8": 14.9, "L6x6x5/16": 12.4,
     "L5x5x3/4": 23.6, "L5x5x5/8": 20.0, "L5x5x1/2": 16.2, "L5x5x3/8": 12.3, "L5x5x5/16": 10.3,
@@ -376,76 +388,137 @@ profile_weights = {
     "S3x7.5": 7.5, "S3x5.7": 5.7,
 }
 
-def sort_profiles(profiles):
-    profile_types = ['W', 'S', 'HSS', 'MC', 'C', 'L']
-    sorted_profiles = []
-    for prefix in profile_types:
-        type_profiles = [p for p in profiles if p.startswith(prefix)]
-        type_profiles.sort(key=lambda x: profile_weights.get(x, 0), reverse=True)
-        sorted_profiles.extend(type_profiles)
-    remaining = [p for p in profiles if p not in sorted_profiles]
-    sorted_profiles.extend(remaining)
-    return sorted_profiles
+def parse_fraction(s):
+    if '/' in s:
+        num, den = map(int, s.split('/'))
+        return num / den
+    return float(s)
 
-all_profiles = sort_profiles(list(profile_weights.keys()))
+def sort_key(profile):
+    # Extract prefix (e.g., 'W', 'HSS')
+    match = re.match(r'([A-Z]+)', profile)
+    if not match:
+        return (99, 0, 0, 0)
+    prefix = match.group(1)
+    
+    # Type order matching your list, but closer to AISC (W, S, C, MC, L, HSS)
+    types_order = {'W': 0, 'S': 1, 'C': 2, 'MC': 3, 'L': 4, 'HSS': 5}
+    type_idx = types_order.get(prefix, 99)
+    
+    # Parse dimensions based on type
+    if prefix in ['W', 'S', 'C', 'MC']:
+        parts = profile[len(prefix):].split('x')
+        depth = float(parts[0]) if parts[0] else 0
+        weight = parse_fraction(parts[1]) if len(parts) > 1 else 0
+        return (type_idx, depth, weight)
+    
+    elif prefix == 'L':
+        parts = profile[len(prefix):].split('x')
+        if len(parts) == 3:
+            s1 = float(parts[0])
+            s2 = float(parts[1])
+            thick = parse_fraction(parts[2])
+            return (type_idx, max(s1, s2), min(s1, s2), thick)
+        return (type_idx, 0, 0, 0)
+    
+    elif prefix == 'HSS':
+        parts = profile[len(prefix):].split('x')
+        if len(parts) == 3:
+            h = float(parts[0])
+            w = float(parts[1])
+            thick = parse_fraction(parts[2])
+            return (type_idx, max(h, w), min(h, w), thick)
+        return (type_idx, 0, 0, 0)
+    
+    return (type_idx, 0, 0, 0)
+
+def better_sort(profiles):
+    return sorted(profiles, key=sort_key)
+
+# Your profile_weights dict goes here
+all_profiles = better_sort(list(profile_weights.keys()))
 
 # --- AUTHENTICATION FUNCTIONS ---
+
 def show_login_page():
+    st.set_page_config(layout="centered")
+    st.markdown("""
+    <style>
+        html, body, [data-testid="stAppViewContainer"] {
+            height: 100vh;
+            overflow: hidden;
+            background: radial-gradient(circle at top, #0f0f19 0%, #050510 100%);
+        }
+        .login-frame {
+            max-width: 500px;
+            margin: auto;
+            padding: 2rem;
+            background: rgba(20, 20, 30, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 0 40px rgba(0, 255, 255, 0.2);
+            border: 1px solid rgba(0, 255, 255, 0.2);
+            backdrop-filter: blur(20px);
+        }
+        .login-title {
+            font-size: 40px;
+            font-weight: 800;
+            text-align: center;
+            background: linear-gradient(135deg, #00ffff, #0099ff, #ff00ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        .login-subtitle {
+            text-align: center;
+            color: rgba(255,255,255,0.6);
+            font-size: 14px;
+            letter-spacing: 1.5px;
+            margin-bottom: 2rem;
+        }
+        .logo {
+            display: block;
+            margin: 2rem auto 1rem auto;
+            max-width: 300px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
     logo = next((p for p in ["logo.png", "assets/logo.png", "logo.jpg", "assets/logo.jpg"] 
                  if os.path.exists(p)), None)
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if logo:
-            st.image(logo, use_container_width=True)
+
+    if logo:
+        st.image(logo, use_container_width=True)
+    else:
+        st.markdown('<div style="text-align:center; font-size:72px; margin:2rem 0;">🏗️</div>', unsafe_allow_html=True)
+
+    
+    st.markdown('<div class="login-title">RIGC 2030</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-subtitle">SISTEMA DE CÁLCULO INDUSTRIAL</div>', unsafe_allow_html=True)
+
+    if st.session_state.attempts >= MAX_ATTEMPTS:
+        st.error("⚠️ Máximo de intentos alcanzado. Contacte al administrador.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+
+    with st.form("login_form", clear_on_submit=True):
+        username = st.text_input("👤 Usuario", placeholder="Ingrese su usuario")
+        password = st.text_input("🔒 Contraseña", type="password", placeholder="Ingrese su contraseña")
+        submit = st.form_submit_button("ACCEDER", use_container_width=True, type="primary")
+
+    if submit:
+        if username in USER_PASSCODES and password == USER_PASSCODES[username]:
+            st.session_state.authenticated = True
+            st.session_state.username = username
+            st.success("✅ Acceso exitoso")
+            st.rerun()
         else:
-            st.markdown('<div style="text-align:center; font-size:72px; margin:2rem 0;">🏗️</div>', 
-                       unsafe_allow_html=True)
-        st.markdown("""
-        <div class="login-container" style="
-            background: rgba(15, 15, 25, 0.95);
-            border: 2px solid rgba(0, 255, 255, 0.3);
-            border-radius: 30px;
-            padding: 2rem;
-            backdrop-filter: blur(25px);
-            box-shadow: 0 0 30px rgba(0, 255, 255, 0.3);
-            margin-top: 1rem;
-        ">
-            <h1 style="
-                text-align: center;
-                font-size: 48px;
-                font-weight: 800;
-                background: linear-gradient(135deg, #00ffff 0%, #0099ff 50%, #ff00ff 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                margin-bottom: 0.5rem;
-            ">RIGC 2030</h1>
-            <p style="text-align: center; color: rgba(255,255,255,0.7); font-size: 14px; 
-                      letter-spacing: 2px; margin-bottom: 2rem;">
-                SISTEMA DE CÁLCULO INDUSTRIAL
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.session_state.attempts >= MAX_ATTEMPTS:
-            st.error("⚠️ Máximo de intentos alcanzado. Contacte al administrador.")
-            return
-        with st.form("login_form", clear_on_submit=True):
-            username = st.text_input("👤 Usuario", placeholder="Ingrese su usuario")
-            password = st.text_input("🔒 Contraseña", type="password", placeholder="Ingrese su contraseña")
-            col_a, col_b, col_c = st.columns([1, 2, 1])
-            with col_b:
-                submit = st.form_submit_button("ACCEDER", use_container_width=True, type="primary")
-        if submit:
-            if username in USER_PASSCODES and password == USER_PASSCODES[username]:
-                st.session_state.authenticated = True
-                st.session_state.username = username
-                st.success("✅ Acceso exitoso")
+            st.session_state.attempts += 1
+            remaining = MAX_ATTEMPTS - st.session_state.attempts
+            st.error(f"❌ Credenciales incorrectas. {'Intentos: ' + str(remaining) if remaining > 0 else 'Último intento'}")
+            if remaining == 0:
                 st.rerun()
-            else:
-                st.session_state.attempts += 1
-                remaining = MAX_ATTEMPTS - st.session_state.attempts
-                st.error(f"❌ Credenciales incorrectas. {'Intentos: ' + str(remaining) if remaining > 0 else 'Último intento'}")
-                if remaining == 0:
-                    st.rerun()
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # --- CALCULATION FUNCTIONS ---
 def calculate_materials(largo, ancho, alto_lateral, alto_techado):
@@ -698,8 +771,9 @@ class QuotationGenerator:
         buffer.seek(0)
         return buffer
 
-# --- MAIN APPLICATION ---
+# --- MAIN APPLICATION (SINGLE PAGE, NO TABS) ---
 def show_main_app():
+    # === SIDEBAR: CLIENT MANAGEMENT (UNCHANGED) ===
     st.sidebar.header("👥 Gestión de Clientes")
     st.sidebar.markdown("---")
     client_mode = st.sidebar.radio("Modo:", ["Seleccionar Cliente", "Nuevo Cliente"], key="client_mode_radio")
@@ -764,30 +838,92 @@ def show_main_app():
         st.session_state.username = ""
         st.rerun()
 
-    st.markdown(f"""
-    <div style='text-align: center; padding: 1rem 0 2rem 0;'>
-        <h1 style='
-            font-size: 72px;
-            font-weight: 900;
-            background: linear-gradient(135deg, #00ffff 0%, #0099ff 50%, #ff00ff 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            text-transform: uppercase;
-            letter-spacing: 4px;
-            margin-bottom: 0;
-            line-height: 1.2;
-        '>RIGC 2030</h1>
-        <p style='
-            font-size: 24px;
-            color: rgba(255, 255, 255, 0.8);
-            font-weight: 300;
-            letter-spacing: 8px;
-            text-transform: uppercase;
-            margin-top: -10px;
-        '>Sistema de Cálculo Industrial</p>
-    </div>
+    # === MAIN HEADER ===
+
+    st.markdown("""
+        <style>
+            /* ===== Custom Header Styling ===== */
+            .header-container {
+                text-align: center;
+                padding: 3rem 0 3rem 0;
+                margin-bottom: 2.5rem;
+                position: relative;
+            }
+
+            /* Elegant glow behind text */
+            .header-container::after {
+                content: "";
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: 280px;
+                height: 280px;
+                background: radial-gradient(circle, rgba(0,150,255,0.12) 0%, rgba(0,0,0,0) 70%);
+                filter: blur(40px);
+                z-index: 0;
+            }
+
+            .main-title {
+                position: relative;
+                z-index: 1;
+                font-size: 100px;
+                font-weight: 900;
+                background: linear-gradient(120deg, #00d4ff 0%, #007bff 45%, #9b00ff 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                text-transform: uppercase;
+                letter-spacing: 4px;
+                margin-bottom: 0.3rem;
+                line-height: 1.1;
+                animation: fadeIn 1.2s ease;
+            }
+
+            .subtitle {
+                position: relative;
+                z-index: 1;
+                font-size: 22px;
+                color: #a3a3a3;
+                font-weight: 400;
+                letter-spacing: 6px;
+                text-transform: uppercase;
+                margin-top: -4px;
+                animation: fadeIn 1.8s ease;
+            }
+
+            /* Subtle text shadow glow */
+            .main-title, .subtitle {
+                text-shadow: 0px 0px 20px rgba(0, 100, 255, 0.15);
+            }
+
+            /* Animation */
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+
+            /* Responsive */
+            @media (max-width: 768px) {
+                .main-title {
+                    font-size: 50px;
+                    letter-spacing: 3px;
+                }
+                .subtitle {
+                    font-size: 18px;
+                    letter-spacing: 4px;
+                }
+            }
+        </style>
+
+        <div class="header-container">
+            <h1 class="main-title">RIGC 2030</h1>
+            <p class="subtitle">Sistema de Cálculo Industrial</p>
+        </div>
     """, unsafe_allow_html=True)
 
+
+
+    # === CLIENT CONTEXT ===
     if st.session_state.current_client_id:
         client = database.get_client_by_id(st.session_state.current_client_id)
         st.info(f"**Cliente Activo:** {client['company_name']} - {client.get('contact_name', 'Sin contacto')}")
@@ -801,651 +937,728 @@ def show_main_app():
             st.session_state.current_calculation = None
             st.rerun()
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📐 CÁLCULO DE ACERO", 
-        "🧱 MATERIALES DE CIERRE", 
-        "🧮 COTIZACIÓN", 
-        "💾 GUARDAR"
-    ])
+    st.divider()
 
-    # TAB 1: CÁLCULO DE ACERO
-    with tab1:
-        st.markdown('<div class="section-header">Cálculo de Acero Estructural</div>', unsafe_allow_html=True)
-        if st.session_state.get('current_calculation'):
-            calc_data = st.session_state.current_calculation
-            default_largo = calc_data.get('warehouse_length', 80)
-            default_ancho = calc_data.get('warehouse_width', 25)
-            default_alto_lateral = calc_data.get('lateral_height', 9)
-            default_alto_techado = calc_data.get('roof_height', 7)
-            default_distancia = calc_data.get('axis_distance', 7.27)
-        else:
-            default_largo = 80
-            default_ancho = 25
-            default_alto_lateral = 9
-            default_alto_techado = 7
-            default_distancia = 7.27
+    # ===================================================================================
+    # SECTION 1: CÁLCULO COMPLETO (ACERO + MATERIALES)
+    # ===================================================================================
+    st.markdown("""
+        <style>
+            /* ===== Custom Header Styling ===== */
+            .header-container {
+                text-align: center;
+                padding: 3rem 0 3rem 0;
+                margin-bottom: 2.5rem;
+                position: relative;
+            }
 
-        st.markdown("### ⚙️ Configuración de la Estructura")
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            largo = st.number_input("Largo (m)", min_value=10.0, max_value=200.0, value=float(default_largo), step=0.1, key="steel_largo")
-        with col2:
-            ancho = st.number_input("Ancho (m)", min_value=10.0, max_value=100.0, value=float(default_ancho), step=0.1, key="steel_ancho")
-        with col3:
-            alto_lateral = st.number_input("Altura Lateral (m)", min_value=4.0, max_value=20.0, value=float(default_alto_lateral), step=0.1, key="steel_alto_lateral")
-        with col4:
-            alto_techado = st.number_input("Altura Techado (m)", min_value=5.0, max_value=25.0, value=float(default_alto_techado), step=0.1, key="steel_alto_techado")
-        with col5:
-            distancia = st.number_input("Distancia entre Ejes (m)", min_value=0.1, value=float(default_distancia), step=0.01, key="steel_distancia")
+            /* Elegant glow behind text */
+            .header-container::after {
+                content: "";
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: 280px;
+                height: 280px;
+                background: radial-gradient(circle, rgba(0,150,255,0.12) 0%, rgba(0,0,0,0) 70%);
+                filter: blur(40px);
+                z-index: 0;
+            }
 
-        if alto_techado > alto_lateral:
-            st.warning("⚠️ La altura del techado debe ser mayor o igual a la altura lateral.")
-            st.stop()
+            .main-title {
+                position: relative;
+                z-index: 1;
+                font-size: 100px;
+                font-weight: 900;
+                background: linear-gradient(120deg, #00d4ff 0%, #007bff 45%, #9b00ff 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                text-transform: uppercase;
+                letter-spacing: 4px;
+                margin-bottom: 0.3rem;
+                line-height: 1.1;
+                animation: fadeIn 1.2s ease;
+            }
 
-        st.markdown("### 🔧 Selección de Perfiles")
-        default_columna = "W12x136"
-        default_tijerilla = "W14x159"
-        default_portico = "W16x100"
-        default_correa = "C10x25"
-        default_lateral = "W12x87"
+            .subtitle {
+                position: relative;
+                z-index: 1;
+                font-size: 22px;
+                color: #a3a3a3;
+                font-weight: 400;
+                letter-spacing: 6px;
+                text-transform: uppercase;
+                margin-top: -4px;
+                animation: fadeIn 1.8s ease;
+            }
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**Perfiles Principales**")
-            col1a, col1b = st.columns(2)
-            with col1a:
-                columnas = st.selectbox(
-                    "Perfil Columnas", 
-                    options=all_profiles, 
-                    index=all_profiles.index(default_columna) if default_columna in all_profiles else 0,
-                    key="col_profile"
-                )
-                tijerillas = st.selectbox(
-                    "Perfil Tijerillas", 
-                    options=all_profiles, 
-                    index=all_profiles.index(default_tijerilla) if default_tijerilla in all_profiles else 0,
-                    key="beam_profile"
-                )
-            with col1b:
-                porticos = st.selectbox(
-                    "Perfil Pórticos", 
-                    options=all_profiles, 
-                    index=all_profiles.index(default_portico) if default_portico in all_profiles else 0,
-                    key="frame_profile"
-                )
-                correas = st.selectbox(
-                    "Perfil Correas", 
-                    options=all_profiles, 
-                    index=all_profiles.index(default_correa) if default_correa in all_profiles else 0,
-                    key="purlin_profile"
-                )
-        with col2:
-            st.markdown("**Configuración Lateral**")
-            col2a, col2b = st.columns(2)
-            with col2a:
-                columnas_laterales = st.selectbox(
-                    "Perfil Columnas Laterales", 
-                    options=all_profiles, 
-                    index=all_profiles.index(default_lateral) if default_lateral in all_profiles else 0,
-                    key="lat_profile"
-                )
-                num_lados = st.selectbox("Lados Laterales", options=[1, 2], index=1, key="lat_lados")
-            with col2b:
-                incluir_laterales = st.checkbox("Incluir Columnas Laterales", value=True, key="include_lateral")
-                st.info("Columnas Laterales: (L÷D+1)×Lados×H×Peso×3.28")
+            /* Subtle text shadow glow */
+            .main-title, .subtitle {
+                text-shadow: 0px 0px 20px rgba(0, 100, 255, 0.15);
+            }
 
-        with st.expander("📊 Ver Pesos de Perfiles Seleccionados"):
-            col1, col2, col3, col4, col5 = st.columns(5)
-            with col1:
-                st.metric("Columnas", f"{profile_weights.get(columnas, 0)} lbs/ft")
-            with col2:
-                st.metric("Tijerillas", f"{profile_weights.get(tijerillas, 0)} lbs/ft")
-            with col3:
-                st.metric("Pórticos", f"{profile_weights.get(porticos, 0)} lbs/ft")
-            with col4:
-                st.metric("Correas", f"{profile_weights.get(correas, 0)} lbs/ft")
-            with col5:
-                st.metric("Laterales", f"{profile_weights.get(columnas_laterales, 0)} lbs/ft")
+            /* Animation */
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
 
-        if st.button("🔩 CALCULAR ESTRUCTURA COMPLETA", type="primary", key="calc_steel_btn"):
-            try:
-                peso_columnas = profile_weights.get(columnas, 0)
-                peso_tijerillas = profile_weights.get(tijerillas, 0)
-                peso_porticos = profile_weights.get(porticos, 0)
-                peso_laterales = profile_weights.get(columnas_laterales, 0)
-                peso_correas = profile_weights.get(correas, 0)
-
-                if any(w == 0 for w in [peso_columnas, peso_tijerillas, peso_porticos, peso_correas]):
-                    st.error("Uno o más perfiles no tienen peso definido. Revise el diccionario `profile_weights`.")
-                    st.stop()
-
-                num_ejes = int((largo / distancia) + 1)
-                num_columnas = num_ejes * 2
-                libras_columnas = num_columnas * alto_lateral * peso_columnas * 3.28
-                ton_columnas = libras_columnas / 2204.62
-
-                num_tijerillas_calc = num_ejes * 2
-                libras_tijerillas = num_tijerillas_calc * 1.1 * ancho * peso_tijerillas * 3.28
-                ton_tijerillas = libras_tijerillas / 2204.62
-
-                perimetro = (ancho * 2) + (largo * 2)
-                libras_porticos = perimetro * peso_porticos * 3.28
-                ton_porticos = libras_porticos / 2204.62
-
-                num_columnas_frontales = int((ancho / distancia) + 1) * 2
-                libras_columnas_frontales = num_columnas_frontales * alto_lateral * 1.1 * 3.28 * peso_columnas
-                ton_columnas_frontales = libras_columnas_frontales / 2204.62
-
-                if incluir_laterales:
-                    num_columnas_laterales = int((largo / distancia) + 1) * num_lados
-                    libras_columnas_laterales = num_columnas_laterales * alto_lateral * peso_laterales * 3.28
-                    ton_columnas_laterales = libras_columnas_laterales / 2204.62
-                else:
-                    num_columnas_laterales = 0
-                    libras_columnas_laterales = 0
-                    ton_columnas_laterales = 0
-
-                correas_techo = int((largo / 1.5) * (num_ejes * 2))
-                correas_pared = int(((alto_lateral / 1.5) * num_ejes * 2) + ((alto_lateral / 1.5) * 4))
-                total_correas = correas_techo + correas_pared
-                libras_correas = total_correas * 6 * peso_correas * 3.28
-                ton_correas = libras_correas / 2204.62
-
-                total_libras = (libras_columnas + libras_tijerillas + libras_porticos + 
-                               libras_columnas_frontales + libras_columnas_laterales + libras_correas)
-                libras_conexiones = total_libras * 0.15
-                ton_conexiones = libras_conexiones / 2204.62
-                cantidad_pernos = num_ejes * 2
-                tornillos_3_4 = int(libras_conexiones / 5)
-                total_ton = (ton_columnas + ton_tijerillas + ton_porticos + 
-                            ton_columnas_frontales + ton_columnas_laterales + 
-                            ton_correas + ton_conexiones)
-
-                st.session_state.last_steel_calc = {
-                    'num_ejes': num_ejes,
-                    'num_columnas': num_columnas,
-                    'num_tijerillas': num_tijerillas_calc,
-                    'num_porticos': perimetro,
-                    'columnas_laterales': num_columnas_laterales,
-                    'columnas_frontales': num_columnas_frontales,
-                    'total_columnas': num_columnas + num_columnas_frontales + num_columnas_laterales,
-                    'correas_techo': correas_techo,
-                    'correas_pared': correas_pared,
-                    'total_correas': total_correas,
-                    'ton_columnas': ton_columnas,
-                    'ton_tijerillas': ton_tijerillas,
-                    'ton_porticos': ton_porticos,
-                    'ton_frontales': ton_columnas_frontales,
-                    'ton_laterales': ton_columnas_laterales,
-                    'ton_correas': ton_correas,
-                    'ton_conexiones': ton_conexiones,
-                    'peso_total': total_ton,
-                    'pernos': cantidad_pernos,
-                    'tornillos_3_4': tornillos_3_4,
-                    'largo': largo,
-                    'ancho': ancho,
-                    'alto_lateral': alto_lateral,
-                    'alto_techado': alto_techado
+            /* Responsive */
+            @media (max-width: 768px) {
+                .main-title {
+                    font-size: 50px;
+                    letter-spacing: 3px;
                 }
+                .subtitle {
+                    font-size: 18px;
+                    letter-spacing: 4px;
+                }
+            }
+        </style>
 
-                st.success("✅ Cálculo de Acero Estructural Completado Exitosamente")
-                st.markdown("### 📊 RESULTADOS DEL CÁLCULO ESTRUCTURAL")
-                col1, col2, col3, col4 = st.columns(4)
-                for i, (title, num, ton) in enumerate([
-                    ("COLUMNAS PRINCIPALES", num_columnas, ton_columnas),
-                    ("TIJERILLAS", num_tijerillas_calc, ton_tijerillas),
-                    ("CORREAS", total_correas, ton_correas),
-                    ("PÓRTICOS", perimetro, ton_porticos)
-                ]):
-                    unit = "unidades" if i != 3 else "m perímetro"
-                    with [col1, col2, col3, col4][i]:
-                        st.markdown(f"""
-                        <div class="metric-card">
-                            <div style="font-size: 14px; color: rgba(0, 255, 255, 0.8); margin-bottom: 12px;">{title}</div>
-                            <div style="font-size: 36px; font-weight: 800; background: linear-gradient(135deg, #00ffff 0%, #0099ff 50%, #ff00ff 100%);
-                                 -webkit-background-clip: text; -webkit-text-fill-color: transparent;">{num:.0f}</div>
-                            <div style="font-size: 12px; color: rgba(255, 255, 255, 0.6);">{unit}</div>
-                            <hr style="margin: 20px 0; border: 1px solid rgba(0, 255, 255, 0.3);">
-                            <div style="font-size: 14px; color: rgba(0, 255, 255, 0.8);">TONELAJE</div>
-                            <div style="font-size: 28px; font-weight: 800; background: linear-gradient(135deg, #00ffff 0%, #0099ff 50%, #ff00ff 100%);
-                                 -webkit-background-clip: text; -webkit-text-fill-color: transparent;">{ton:.2f}</div>
-                            <div style="font-size: 12px; color: rgba(255, 255, 255, 0.6);">ton</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+        <div class="header-container">
+            <h1 class="main-title">CÁLCULO COMPLETO</h1>
+            <p class="subtitle">ESTRUCTURA ➕ MATERIALES</p>
+        </div>
+    """, unsafe_allow_html=True)
 
-                st.markdown("### ⚖️ RESUMEN DE PESOS (TONELADAS)")
-                weights_df = pd.DataFrame({
-                    'Componente': ['Columnas Principales', 'Columnas Frontales', 'Columnas Laterales', 
-                                  'Tijerillas', 'Pórticos', 'Correas', 'Conexiones (15%)', 'TOTAL'],
-                    'Cantidad': [num_columnas, num_columnas_frontales, num_columnas_laterales if incluir_laterales else 0,
-                               num_tijerillas_calc, f"{perimetro:.1f}m", total_correas, '-', '-'],
-                    'Peso (Ton)': [
-                        f"{ton_columnas:.2f}",
-                        f"{ton_columnas_frontales:.2f}",
-                        f"{ton_columnas_laterales:.2f}" if incluir_laterales else "0.00",
-                        f"{ton_tijerillas:.2f}",
-                        f"{ton_porticos:.2f}",
-                        f"{ton_correas:.2f}",
-                        f"{ton_conexiones:.2f}",
-                        f"{total_ton:.2f}"
-                    ]
-                })
-                st.dataframe(weights_df, use_container_width=True, hide_index=True)
+    # --- Load defaults ---
+    if st.session_state.get('current_calculation'):
+        calc_data = st.session_state.current_calculation
+        default_largo = calc_data.get('warehouse_length', 80)
+        default_ancho = calc_data.get('warehouse_width', 25)
+        default_alto_lateral = calc_data.get('lateral_height', 7)
+        default_alto_techado = calc_data.get('roof_height', 9)
+        default_distancia = calc_data.get('axis_distance', 7.27)
+    else:
+        default_largo = 80
+        default_ancho = 25
+        default_alto_lateral = 7
+        default_alto_techado = 9
+        default_distancia = 7.27
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.info(f"🔩 **Pernos de Anclaje Requeridos:** {cantidad_pernos} unidades")
-                with col2:
-                    st.info(f"🔧 **Tornillos 3/4\" Estimados:** {tornillos_3_4:,} unidades")
+    # --- Inputs ---
+    st.markdown("### ⚙️ Configuración de la Estructura")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        largo = st.number_input("Largo (m)", min_value=10.0, max_value=200.0, value=float(default_largo), step=0.1, key="steel_largo")
+    with col2:
+        ancho = st.number_input("Ancho (m)", min_value=10.0, max_value=100.0, value=float(default_ancho), step=0.1, key="steel_ancho")
+    with col3:
+        alto_lateral = st.number_input("Altura Lateral (m)", min_value=4.0, max_value=20.0, value=float(default_alto_lateral), step=0.1, key="steel_alto_lateral")
+    with col4:
+        alto_techado = st.number_input("Altura Techado (m)", min_value=5.0, max_value=25.0, value=float(default_alto_techado), step=0.1, key="steel_alto_techado")
+    with col5:
+        distancia = st.number_input("Distancia entre ejes (m)", min_value=0.1, max_value=20.0, value=float(default_distancia), step=0.01, key="axis_distance")
 
-                lateral_text = f" | Laterales: {ton_columnas_laterales:,.2f}" if incluir_laterales else ""
-                st.markdown(f"""
-                <div class="result-card">
-                    <div style="font-size: 24px; font-weight: 800; color: rgba(0, 255, 255, 0.9); margin-bottom: 24px;">PESO TOTAL DE ACERO ESTRUCTURAL</div>
-                    <div style="font-size: 64px; font-weight: 900; background: linear-gradient(135deg, #00ffff 0%, #0099ff 50%, #ff00ff 100%);
-                         -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 24px 0;">{total_ton:,.2f} TON</div>
-                    <div style="font-size: 16px; color: rgba(255, 255, 255, 0.7);">
-                        Principales: {ton_columnas:,.2f} | Tijerillas: {ton_tijerillas:,.2f} | Pórticos: {ton_porticos:,.2f} | 
-                        Frontales: {ton_columnas_frontales:,.2f}{lateral_text} | Correas: {ton_correas:,.2f} | Conexiones: {ton_conexiones:,.2f}
-                    </div>
-                    <div style="margin-top: 20px; padding: 15px; background: rgba(0, 255, 255, 0.1); border-radius: 10px;">
-                        <div style="font-size: 14px; color: rgba(255, 255, 255, 0.8);">
-                            📐 Estructura: {largo}m × {ancho}m × {alto_lateral}m | 
-                            🏗️ Ejes: {num_ejes} @ {distancia}m | 
-                            🏠 Altura Techado: {alto_techado}m
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"❌ Error en el cálculo: {str(e)}")
-                st.info("Verifica que todos los perfiles tengan pesos definidos en el diccionario profile_weights")
+    if alto_techado < alto_lateral:
+        st.warning("⚠️ La altura del techado debe ser mayor o igual a la altura lateral.")
+        st.stop()
 
-    # TAB 2: MATERIALES DE CIERRE
-    with tab2:
-        st.markdown("### 📏 Dimensiones de la Nave")
-        col1, col2, col3, col4 = st.columns(4)
-        if st.session_state.current_calculation:
-            calc_data = st.session_state.current_calculation
-            default_largo_mat = calc_data.get('warehouse_length', 30)
-            default_ancho_mat = calc_data.get('warehouse_width', 20)
-            default_alto_lateral_mat = calc_data.get('lateral_height', 6)
-            default_alto_techado_mat = calc_data.get('roof_height', 8)
-        else:
-            default_largo_mat = 30
-            default_ancho_mat = 20
-            default_alto_lateral_mat = 6
-            default_alto_techado_mat = 8
+    # --- Profile selection ---
+    st.markdown("### 🔧 Selección de Perfiles")
+    default_columna = "W12x136"
+    default_portico = "W16x100"
+    default_tijerilla = "W14x159"
+    default_lateral = "W12x87"
+    default_bracing = "L6x4x1/2"
+    default_sagrod = "L3x3x1/4"
 
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Perfiles Principales**")
+        col1a, col1b = st.columns(2)
+        with col1a:
+            columnas = st.selectbox("Perfil Columnas centrales", options=all_profiles, index=all_profiles.index(default_columna) if default_columna in all_profiles else 0, key="col_profile")
+            tijerillas = st.selectbox("Perfil Tijerillas", options=all_profiles, index=all_profiles.index(default_tijerilla) if default_tijerilla in all_profiles else 0, key="beam_profile")
+        with col1b:
+            porticos = st.selectbox("Perfil Pórticos de frenado", options=all_profiles, index=all_profiles.index(default_portico) if default_portico in all_profiles else 0, key="frame_profile")
+        st.markdown("**Perfiles de Refuerzo**")
+        bracing = st.selectbox("Perfil Bracing (arriostramiento)", options=all_profiles, index=all_profiles.index(default_bracing) if default_bracing in all_profiles else 0, key="bracing_profile")
+        sagrods = st.selectbox("Perfil Sag Rods (tensores)", options=all_profiles, index=all_profiles.index(default_sagrod) if default_sagrod in all_profiles else 0, key="sagrod_profile")
+    with col2:
+        st.markdown("**Configuración Lateral**")
+        col2a, col2b = st.columns(2)
+        with col2a:
+            columnas_laterales = st.selectbox("Perfil Columnas laterales", options=all_profiles, index=all_profiles.index(default_lateral) if default_lateral in all_profiles else 0, key="lat_profile")
+            num_lados = st.selectbox("Lados laterales", options=[1, 2], index=1, key="lat_lados")
+        with col2b:
+            incluir_laterales = st.checkbox("Incluir Columnas laterales", value=True, key="include_lateral")
+
+    # --- Profile weights ---
+    with st.expander("📊 Ver Pesos de Perfiles Seleccionados"):
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
         with col1:
-            largo_mat = st.number_input("Largo (m)", min_value=5, max_value=200, value=default_largo_mat, 
-                                       step=1, key="largo_mat")
+            st.metric("Columnas centrales", f"{profile_weights.get(columnas, 0)} lbs/ft")
         with col2:
-            ancho_mat = st.number_input("Ancho (m)", min_value=5, max_value=100, value=default_ancho_mat, 
-                                       step=1, key="ancho_mat")
+            st.metric("Tijerillas", f"{profile_weights.get(tijerillas, 0)} lbs/ft")
         with col3:
-            alto_lateral_mat = st.number_input("Alto Lateral (m)", min_value=3, max_value=20, 
-                                              value=default_alto_lateral_mat, step=1, key="alto_lateral_mat")
+            st.metric("Pórticos de frenado", f"{profile_weights.get(porticos, 0)} lbs/ft")
         with col4:
-            alto_techado_mat = st.number_input("Alto Techado (m)", min_value=4, max_value=25, 
-                                              value=default_alto_techado_mat, step=1, key="alto_techado_mat")
+            st.metric("Columnas laterales", f"{profile_weights.get(columnas_laterales, 0)} lbs/ft")
+        with col5:
+            st.metric("Bracing", f"{profile_weights.get(bracing, 0)} lbs/ft")
+        with col6:
+            st.metric("Sag Rods", f"{profile_weights.get(sagrods, 0)} lbs/ft")
 
-        if st.button("🔧 CALCULAR MATERIALES", type="primary", key="calc_materials"):
-            materials = calculate_materials(largo_mat, ancho_mat, alto_lateral_mat, alto_techado_mat)
-            st.session_state.last_materials_calc = materials
-            st.markdown("### 📋 MATERIALES REQUERIDOS")
-            materials_df = pd.DataFrame([
-                {"Material": "Aluzinc Techo", "Cantidad": f"{materials['aluzinc_techo']:,.2f}", 
-                 "Unidad": "pies²", "Fórmula": "Largo × Ancho × 1.1 × 3.28"},
-                {"Material": "Aluzinc Pared", "Cantidad": f"{materials['aluzinc_pared']:,.2f}", 
-                 "Unidad": "pies²", "Fórmula": "Perímetro × Alto × 3.28"},
-                {"Material": "Correa de Techo", "Cantidad": f"{materials['correa_techo']:,.2f}", 
-                 "Unidad": "pies", "Fórmula": "(Ancho + 2) × Ancho × 3.28"},
-                {"Material": "Correa de Pared", "Cantidad": f"{materials['correa_pared']:,.2f}", 
-                 "Unidad": "pies", "Fórmula": "Perímetro × (Altura/2 + 1) × 3.28"},
-                {"Material": "Tornillos", "Cantidad": f"{materials['tornillos_techo']:,.0f}", 
-                 "Unidad": "unidades", "Fórmula": "Total Aluzinc × 5"},
-                {"Material": "Cubrefaltas", "Cantidad": f"{materials['cubrefaltas']:,.2f}", 
-                 "Unidad": "pies", "Fórmula": "(Ancho×2 + Alto×4) × 1.1 × 3.28"},
-                {"Material": "Canaletas", "Cantidad": f"{materials['canaletas']:,.2f}", 
-                 "Unidad": "pies", "Fórmula": "Largo × 2 × 1.1 × 3.28"},
-                {"Material": "Bajantes", "Cantidad": f"{materials['bajantes']:,.0f}", 
-                 "Unidad": "unidades", "Fórmula": "Largo ÷ 7 + 1"},
-                {"Material": "Caballetes", "Cantidad": f"{materials['caballetes']:,.2f}", 
-                 "Unidad": "pies", "Fórmula": "Largo × 1.1 × 3.28"}
-            ])
-            st.dataframe(materials_df, use_container_width=True)
-            area_total = largo_mat * ancho_mat
-            st.markdown(f"""
-            <div class="result-card">
-                <h3 style="color: var(--primary-neon);">ÁREA TOTAL DE LA NAVE</h3>
-                <h2 style="font-size: 36px; color: var(--accent-neon);">{area_total:,.0f} m²</h2>
-            </div>
-            """, unsafe_allow_html=True)
-
-    # TAB 3: COTIZACIÓN
-    with tab3:
-        st.markdown("### 📝 INFORMACIÓN DE LA EMPRESA")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            company_name = st.text_input("Nombre de Empresa", value="RIGC INDUSTRIAL", key="company_name")
-            phone = st.text_input("Teléfono", value="809-555-0100", key="company_phone")
-        with col2:
-            email = st.text_input("Email", value="info@rigc.com", key="company_email")
-            quoted_by = st.text_input("Cotizado por", value=st.session_state.username, key="quoted_by")
-        with col3:
-            quote_validity = st.number_input("Validez (días)", value=30, min_value=1, key="quote_validity")
-
-        st.markdown("### 👤 INFORMACIÓN DEL CLIENTE")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.session_state.current_client_id:
-                client = database.get_client_by_id(st.session_state.current_client_id)
-                client_name = st.text_input("Cliente", value=client['company_name'], key="client_name")
+    # --- CALCULATE BUTTON ---
+    if st.button("【 CALCULAR ESTRUCTURA COMPLETA + MATERIALES 】", type="primary", key="calc_full_btn", use_container_width=True):
+        try:
+            # ===== STEEL =====
+            num_ejes = int((largo / distancia) + 1)
+            num_bays_largo = num_ejes - 1
+            if incluir_laterales:
+                num_columnas_laterales = (num_bays_largo + 1) * num_lados
             else:
-                client_name = st.text_input("Cliente", placeholder="Nombre del cliente", key="client_name")
-        with col2:
-            project_name = st.text_input("Proyecto", placeholder="Nombre del proyecto", key="project_name")
+                num_columnas_laterales = 0
 
-        notes = st.text_area("Notas adicionales", placeholder="Condiciones especiales, observaciones...", key="notes")
+            steel_data = [
+                {"perfil": columnas, "funcion": "Columnas centrales", "peso_m": profile_weights.get(columnas, 0) * 1.488, "cantidad": num_ejes * 2, "longitud": alto_lateral, "eje": "E1-E6", "proveedor": "AceroDominicana", "acero": "A992"},
+                {"perfil": porticos, "funcion": "Pórticos de frenado", "peso_m": profile_weights.get(porticos, 0) * 1.488, "cantidad": 2, "longitud": ancho, "eje": "F1-F3", "proveedor": "AceroDominicana", "acero": "A572"},
+                {"perfil": tijerillas, "funcion": "Tijerillas", "peso_m": profile_weights.get(tijerillas, 0) * 1.488, "cantidad": num_ejes * 2, "longitud": ancho * 1.1, "eje": "Cubierta", "proveedor": "Metalmecánica SRL", "acero": "A992"},
+                {"perfil": columnas_laterales, "funcion": "Columnas laterales", "peso_m": profile_weights.get(columnas_laterales, 0) * 1.488, "cantidad": num_columnas_laterales, "longitud": alto_lateral, "eje": "L1-L5", "proveedor": "Metalmecánica SRL", "acero": "A36"},
+                {"perfil": bracing, "funcion": "Bracing (arriostramiento)", "peso_m": profile_weights.get(bracing, 0) * 1.488, "cantidad": 2 * num_bays_largo * num_lados, "longitud": math.sqrt(distancia**2 + alto_lateral**2), "eje": "Entre columnas", "proveedor": "AceroDominicana", "acero": "A36"},
+                {"perfil": sagrods, "funcion": "Sag Rods (tensores)", "peso_m": profile_weights.get(sagrods, 0) * 1.488, "cantidad": int((largo / 1.5) * (num_ejes * 2)), "longitud": 3.5, "eje": "Cubierta", "proveedor": "Metalmecánica SRL", "acero": "A36"},
+            ]
+            df_steel = pd.DataFrame(steel_data)
+            df_steel["peso_total"] = df_steel["peso_m"] * df_steel["cantidad"] * df_steel["longitud"]
+            df_steel["tipo"] = "Acero Estructural"
 
-        st.markdown("### 📦 GESTIÓN DE PRODUCTOS")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📥 Importar desde Cálculo de Acero", key="import_steel"):
-                if st.session_state.last_steel_calc:
-                    calc = st.session_state.last_steel_calc
-                    steel_products = [
-                        {"product_name": "Estructura de Acero - Columnas", 
-                         "quantity": calc['ton_columnas'], "unit_price": 1200.0,
-                         "subtotal": calc['ton_columnas'] * 1200.0},
-                        {"product_name": "Estructura de Acero - Tijerillas", 
-                         "quantity": calc['ton_tijerillas'], "unit_price": 1200.0,
-                         "subtotal": calc['ton_tijerillas'] * 1200.0},
-                        {"product_name": "Estructura de Acero - Correas", 
-                         "quantity": calc['ton_correas'], "unit_price": 1200.0,
-                         "subtotal": calc['ton_correas'] * 1200.0},
-                        {"product_name": "Estructura de Acero - Pórticos", 
-                         "quantity": calc['ton_porticos'], "unit_price": 1200.0,
-                         "subtotal": calc['ton_porticos'] * 1200.0},
-                        {"product_name": "Conexiones y Accesorios", 
-                         "quantity": calc['ton_conexiones'], "unit_price": 1500.0,
-                         "subtotal": calc['ton_conexiones'] * 1500.0}
-                    ]
-                    st.session_state.quote_products.extend(steel_products)
-                    st.success("✅ Productos de acero importados")
-                    st.rerun()
-                else:
-                    st.warning("⚠️ No hay cálculo de acero disponible")
-        with col2:
-            if st.button("📥 Importar desde Materiales", key="import_materials"):
-                if st.session_state.last_materials_calc:
-                    materials = st.session_state.last_materials_calc
-                    material_products = [
-                        {"product_name": "Aluzinc Techo", 
-                         "quantity": materials['aluzinc_techo'], "unit_price": 3.5,
-                         "subtotal": materials['aluzinc_techo'] * 3.5},
-                        {"product_name": "Aluzinc Pared", 
-                         "quantity": materials['aluzinc_pared'], "unit_price": 3.5,
-                         "subtotal": materials['aluzinc_pared'] * 3.5},
-                        {"product_name": "Tornillos de Techo", 
-                         "quantity": materials['tornillos_techo'], "unit_price": 0.15,
-                         "subtotal": materials['tornillos_techo'] * 0.15},
-                        {"product_name": "Canaletas", 
-                         "quantity": materials['canaletas'], "unit_price": 12.0,
-                         "subtotal": materials['canaletas'] * 12.0},
-                        {"product_name": "Bajantes", 
-                         "quantity": materials['bajantes'], "unit_price": 85.0,
-                         "subtotal": materials['bajantes'] * 85.0}
-                    ]
-                    st.session_state.quote_products.extend(material_products)
-                    st.success("✅ Materiales importados")
-                    st.rerun()
-                else:
-                    st.warning("⚠️ No hay cálculo de materiales disponible")
+            # ===== MATERIALS =====
+            def calculate_materials(largo, ancho, alto_lateral, alto_techado):
+                aluzinc_techo = largo * ancho * 1.1 * 3.28
+                perimetro = 2 * (largo + ancho)
+                aluzinc_pared = perimetro * alto_lateral * 3.28
+                correa_techo = (ancho + 2) * largo * 3.28
+                correa_pared = perimetro * (alto_lateral / 2 + 1) * 3.28
+                tornillos_techo = aluzinc_techo * 5
+                cubrefaltas = (ancho * 2 + alto_lateral * 4) * 1.1 * 3.28
+                canaletas = largo * 2 * 1.1 * 3.28
+                bajantes = int(largo / 7) + 1
+                caballetes = largo * 1.1 * 3.28
+                return {k: v for k, v in locals().items() if k != 'perimetro'}
 
-        st.markdown("#### ➕ Agregar Producto Manual")
-        with st.form("add_product_form", clear_on_submit=True):
-            col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
-            with col1:
-                new_product_name = st.text_input("Producto")
-            with col2:
-                new_quantity = st.number_input("Cantidad", min_value=0.0, step=1.0)
-            with col3:
-                new_unit_price = st.number_input("Precio Unit.", min_value=0.0, step=0.01)
-            with col4:
-                st.write("")
-                st.write("")
-                add_product = st.form_submit_button("➕")
-            if add_product:
-                if new_product_name and new_quantity > 0 and new_unit_price > 0:
-                    new_product = {
-                        'product_name': new_product_name,
-                        'quantity': new_quantity,
-                        'unit_price': new_unit_price,
-                        'subtotal': new_quantity * new_unit_price
-                    }
-                    st.session_state.quote_products.append(new_product)
-                    st.success(f"Producto '{new_product_name}' agregado")
-                else:
-                    st.error("Complete todos los campos")
+            mats = calculate_materials(largo, ancho, alto_lateral, alto_techado)
+            materials_data = [
+                {"perfil": "Aluzinc Techo", "funcion": "Cubierta", "peso_m": 0, "cantidad": mats['aluzinc_techo'], "longitud": 0, "eje": "Cubierta", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
+                {"perfil": "Aluzinc Pared", "funcion": "Muros", "peso_m": 0, "cantidad": mats['aluzinc_pared'], "longitud": 0, "eje": "Perímetro", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
+                {"perfil": "Correa de Techo", "funcion": "Soporte Techo", "peso_m": 0, "cantidad": mats['correa_techo'], "longitud": 0, "eje": "Cubierta", "proveedor": "Metalmecánica SRL", "acero": "Acero", "tipo": "Material de Cierre"},
+                {"perfil": "Correa de Pared", "funcion": "Soporte Muro", "peso_m": 0, "cantidad": mats['correa_pared'], "longitud": 0, "eje": "Perímetro", "proveedor": "Metalmecánica SRL", "acero": "Acero", "tipo": "Material de Cierre"},
+                {"perfil": "Tornillos", "funcion": "Fijación", "peso_m": 0, "cantidad": mats['tornillos_techo'], "longitud": 0, "eje": "General", "proveedor": "Ferretería", "acero": "Acero", "tipo": "Material de Cierre"},
+                {"perfil": "Cubrefaltas", "funcion": "Cierre Perimetral", "peso_m": 0, "cantidad": mats['cubrefaltas'], "longitud": 0, "eje": "Cubierta", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
+                {"perfil": "Canaletas", "funcion": "Drenaje", "peso_m": 0, "cantidad": mats['canaletas'], "longitud": 0, "eje": "Perímetro", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
+                {"perfil": "Bajantes", "funcion": "Drenaje Vertical", "peso_m": 0, "cantidad": mats['bajantes'], "longitud": 0, "eje": "Esquinas", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
+                {"perfil": "Caballetes", "funcion": "Caballete", "peso_m": 0, "cantidad": mats['caballetes'], "longitud": 0, "eje": "Cubierta", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
+            ]
+            df_materials = pd.DataFrame(materials_data)
+            df_materials["peso_total"] = df_materials["cantidad"]
 
-        if st.session_state.quote_products:
-            st.markdown("### Productos en la Cotización")
-            products_df = pd.DataFrame(st.session_state.quote_products)
-            for col in ['product_name', 'quantity', 'unit_price', 'subtotal']:
-                if col not in products_df.columns:
-                    products_df[col] = 0.0 if col != 'product_name' else ''
-            products_df['quantity'] = pd.to_numeric(products_df['quantity'], errors='coerce').fillna(0)
-            products_df['unit_price'] = pd.to_numeric(products_df['unit_price'], errors='coerce').fillna(0)
-            products_df['subtotal'] = products_df['quantity'] * products_df['unit_price']
-            edited_df = st.data_editor(
-                products_df,
-                column_config={
-                    "product_name": st.column_config.TextColumn("Producto", width="large"),
-                    "quantity": st.column_config.NumberColumn("Cantidad", format="%.2f"),
-                    "unit_price": st.column_config.NumberColumn("Precio Unit. ($)", format="%.2f"),
-                    "subtotal": st.column_config.NumberColumn("Subtotal ($)", format="%.2f", disabled=True)
-                },
-                hide_index=True,
-                use_container_width=True,
-                num_rows="dynamic"
-            )
-            if not edited_df.empty:
-                valid_products = edited_df[
-                    (edited_df['product_name'].notna()) & 
-                    (edited_df['product_name'] != '') &
-                    (edited_df['quantity'] > 0)
-                ].copy()
-                valid_products['quantity'] = valid_products['quantity'].astype(float)
-                valid_products['unit_price'] = valid_products['unit_price'].astype(float)
-                valid_products['subtotal'] = valid_products['quantity'] * valid_products['unit_price']
-                st.session_state.quote_products = valid_products.to_dict('records')
+            # ===== COMBINE & SAVE =====
+            df_combined = pd.concat([df_steel, df_materials], ignore_index=True)
+            st.session_state.full_calculation_result = df_combined
 
-            if st.button("🔄 Limpiar Productos"):
-                st.session_state.quote_products = []
-                st.rerun()
+            # ===== DISPLAY RESULTS =====
+            st.divider()
+            st.markdown('<h3 style="color: #1023c9;">📊 Resultados del Cálculo</h3>', unsafe_allow_html=True)
 
-            if st.session_state.quote_products:
-                totals = QuotationGenerator.calculate_quote(st.session_state.quote_products)
-                st.markdown("### Resumen de Costos")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Items", f"${totals['items_total']:,.2f}")
-                    st.metric("Supervisión (10%)", f"${totals['supervision']:,.2f}")
-                    st.metric("Admin. (4%)", f"${totals['admin']:,.2f}")
-                with col2:
-                    st.metric("Seguro (1%)", f"${totals['insurance']:,.2f}")
-                    st.metric("Transporte (3%)", f"${totals['transport']:,.2f}")
-                    st.metric("Imprevisto (3%)", f"${totals['contingency']:,.2f}")
-                with col3:
-                    st.metric("Subtotal", f"${totals['subtotal_general']:,.2f}")
-                    st.metric("ITBIS (18%)", f"${totals['itbis']:,.2f}")
-                    st.markdown(f"""
-                    <div class="result-card">
-                        <div style="font-size: 24px; color: rgba(0, 255, 0, 0.9);">TOTAL GENERAL</div>
-                        <div style="font-size: 48px; font-weight: 900; color: var(--accent-neon);">
-                            ${totals['grand_total']:,.2f}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+            total_peso_acero = df_combined[df_combined["tipo"] == "Acero Estructural"]["peso_total"].sum()
+            total_materiales = len(df_combined[df_combined["tipo"] == "Material de Cierre"])
 
-                st.markdown("### Generar Cotización")
-                col1, col2 = st.columns(2)
-                with col1:
-                    show_products_in_pdf = st.checkbox("Mostrar productos en PDF", value=True)
-                with col2:
-                    include_sketch = st.checkbox("Incluir diagrama 2D", value=True)
-                if st.button("📄 Generar PDF", type="primary"):
-                    try:
-                        company_info = {
-                            'company_name': company_name,
-                            'phone': phone,
-                            'email': email,
-                            'client': client_name if client_name else "Cliente No Especificado",
-                            'project': project_name if project_name else "Proyecto No Especificado",
-                            'validity': quote_validity,
-                            'quoted_by': quoted_by,
-                            'notes': notes
-                        }
-                        sketch_buffer = None
-                        if include_sketch and st.session_state.last_steel_calc:
-                            calc = st.session_state.last_steel_calc
-                            sketch_buffer = create_building_sketch({
-                                'length': calc.get('largo', 80),
-                                'width': calc.get('ancho', 25),
-                                'wall_height': calc.get('alto_lateral', 9),
-                                'roof_height': max(0, calc.get('alto_techado', 12) - calc.get('alto_lateral', 9))
-                            })
+            col_r1, col_r2, col_r3 = st.columns(3)
+            with col_r1:
+                st.metric("Peso Total de Acero", f"{total_peso_acero:,.2f} kg")
+            with col_r2:
+                st.metric("Ítems de Materiales", f"{total_materiales}")
+            with col_r3:
+                st.metric("Área Total", f"{largo * ancho:,.0f} m²")
 
-                        pdf_buffer = QuotationGenerator.generate_pdf(
-                            quote_data={},
-                            company_info=company_info,
-                            products=st.session_state.quote_products,
-                            totals=totals,
-                            show_products=show_products_in_pdf,
-                            create_building_sketch=sketch_buffer
-                        )
-                        st.download_button(
-                            label="📥 Descargar PDF",
-                            data=pdf_buffer.getvalue(),
-                            file_name=f"cotizacion_{datetime.now().strftime('%Y%m%d')}.pdf",
-                            mime="application/pdf"
-                        )
-                        st.success("✅ Cotización generada")
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
-        else:
-            st.info("No hay productos en la cotización")
+            # --- Steel breakdown ---
+            st.markdown("#### 🔹 Acero Estructural")
+            peso_acero = df_combined[df_combined["tipo"] == "Acero Estructural"]
+            if not peso_acero.empty:
+                res = peso_acero.groupby("funcion")["peso_total"].sum().reset_index()
+                res.columns = ["Elemento", "Peso (kg)"]
+                res["Peso (kg)"] = res["Peso (kg)"].map("{:,.2f}".format)
+                st.dataframe(res, use_container_width=True, hide_index=True)
 
-    # TAB 4: GUARDAR CÁLCULO
-    with tab4:
-        st.markdown("### 💾 GUARDAR CÁLCULO")
+            # --- Materials list ---
+            st.markdown("#### 📦 Materiales de Cierre")
+            materiales_df = df_combined[df_combined["tipo"] == "Material de Cierre"]
+            if not materiales_df.empty:
+                display = materiales_df[["perfil", "cantidad", "eje", "proveedor"]].rename(columns={
+                    "perfil": "Material", "cantidad": "Cantidad", "eje": "Ubicación", "proveedor": "Proveedor"
+                })
+                def fmt(q, mat):
+                    if mat in ["Bajantes"]: return f"{q:,.0f} und"
+                    elif "Tornillos" in mat: return f"{q:,.0f} und"
+                    else: return f"{q:,.2f} pies"
+                display["Cantidad"] = display.apply(lambda row: fmt(row["Cantidad"], row["Material"]), axis=1)
+                st.dataframe(display[["Material", "Cantidad", "Ubicación", "Proveedor"]], use_container_width=True, hide_index=True)
+
+            with st.expander("📋 Ver Desglose Detallado"):
+                df_display = df_combined[[
+                    "tipo", "perfil", "funcion", "cantidad", "longitud", "peso_m", "peso_total", "eje", "proveedor", "acero"
+                ]].copy()
+                df_display.rename(columns={
+                    "tipo": "Tipo", "perfil": "Perfil/Material", "funcion": "Función",
+                    "cantidad": "Cant.", "longitud": "Long. (m)", "peso_m": "Peso/m (kg)",
+                    "peso_total": "Total (kg)", "eje": "Eje", "proveedor": "Proveedor", "acero": "Material"
+                }, inplace=True)
+                df_display["Total (kg)"] = df_display["Total (kg)"].map(lambda x: f"{x:,.2f}" if x != 0 else "N/A")
+                df_display["Peso/m (kg)"] = df_display["Peso/m (kg)"].map(lambda x: f"{x:,.2f}" if x != 0 else "N/A")
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+        except Exception as e:
+            st.error(f"❌ Error en el cálculo: {str(e)}")
+            st.info("Verifica que todos los perfiles tengan pesos definidos en el diccionario profile_weights")
+
+    st.divider()
+
+    # ===================================================================================
+    # SECTION 2: COTIZACIÓN
+    # ===================================================================================
+    st.markdown("""
+        <style>
+            /* ===== Custom Header Styling ===== */
+            .header-container {
+                text-align: center;
+                padding: 3rem 0 3rem 0;
+                margin-bottom: 2.5rem;
+                position: relative;
+            }
+
+            /* Elegant glow behind text */
+            .header-container::after {
+                content: "";
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: 280px;
+                height: 280px;
+                background: radial-gradient(circle, rgba(0,150,255,0.12) 0%, rgba(0,0,0,0) 70%);
+                filter: blur(40px);
+                z-index: 0;
+            }
+
+            .main-title {
+                position: relative;
+                z-index: 1;
+                font-size: 100px;
+                font-weight: 900;
+                background: linear-gradient(120deg, #00d4ff 0%, #007bff 45%, #9b00ff 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                text-transform: uppercase;
+                letter-spacing: 4px;
+                margin-bottom: 0.3rem;
+                line-height: 1.1;
+                animation: fadeIn 1.2s ease;
+            }
+
+            .subtitle {
+                position: relative;
+                z-index: 1;
+                font-size: 22px;
+                color: #a3a3a3;
+                font-weight: 400;
+                letter-spacing: 6px;
+                text-transform: uppercase;
+                margin-top: -4px;
+                animation: fadeIn 1.8s ease;
+            }
+
+            /* Subtle text shadow glow */
+            .main-title, .subtitle {
+                text-shadow: 0px 0px 20px rgba(0, 100, 255, 0.15);
+            }
+
+            /* Animation */
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+
+            /* Responsive */
+            @media (max-width: 768px) {
+                .main-title {
+                    font-size: 50px;
+                    letter-spacing: 3px;
+                }
+                .subtitle {
+                    font-size: 18px;
+                    letter-spacing: 4px;
+                }
+            }
+        </style>
+
+        <div class="header-container">
+            <h1 class="main-title">COTIZACION</h1>
+            <p class="subtitle">ESTRUCTURA ➕ MATERIALES</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # --- Company & Client Info ---
+    st.markdown("### 📝 Información de la Cotización")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        company_name = st.text_input("Nombre de Empresa", value="RIGC INDUSTRIAL", key="company_name")
+        phone = st.text_input("Teléfono", value="809-555-0100", key="company_phone")
+    with col2:
+        email = st.text_input("Email", value="info@rigc.com", key="company_email")
+        quoted_by = st.text_input("Cotizado por", value=st.session_state.username, key="quoted_by")
+    with col3:
+        quote_validity = st.number_input("Validez (días)", value=30, min_value=1, key="quote_validity")
+
+    col1, col2 = st.columns(2)
+    with col1:
         if st.session_state.current_client_id:
             client = database.get_client_by_id(st.session_state.current_client_id)
-            st.info(f"**Cliente:** {client['company_name']}")
-            has_steel = bool(st.session_state.get('last_steel_calc'))
-            has_materials = bool(st.session_state.get('last_materials_calc'))
-            if has_steel or has_materials:
-                with st.form("save_calculation_form"):
-                    project_save_name = st.text_input(
-                        "Nombre del Proyecto",
-                        value=st.session_state.get("project_name", "")
-                    )
-                    calc_type = st.selectbox(
-                        "Tipo de Cálculo a Guardar",
-                        ["Ambos (Acero + Materiales)", "Solo Acero", "Solo Materiales"]
-                    )
-                    total_amount = st.number_input("Monto Total (opcional)", value=0.0, min_value=0.0)
-                    save_notes = st.text_area("Notas del Cálculo")
-                    if st.form_submit_button("💾 Guardar en Base de Datos", type="primary"):
-                        try:
-                            if calc_type == "Ambos (Acero + Materiales)":
-                                if has_steel and has_materials:
-                                    steel = st.session_state.last_steel_calc
-                                    materials = st.session_state.last_materials_calc
-                                    combined_data = {"tipo": "completo", "acero": steel, "materiales": materials}
-                                    save_largo = steel.get('largo', materials.get('largo', 30))
-                                    save_ancho = steel.get('ancho', materials.get('ancho', 20))
-                                    save_alto_lateral = steel.get('alto_lateral', materials.get('alto_lateral', 6))
-                                    save_alto_techado = steel.get('alto_techado', materials.get('alto_techado', 8))
-                                else:
-                                    st.error("Faltan cálculos. Realice ambos cálculos primero.")
-                                    st.stop()
-                            elif calc_type == "Solo Acero":
-                                if has_steel:
-                                    steel = st.session_state.last_steel_calc
-                                    combined_data = {"tipo": "acero", "acero": steel}
-                                    save_largo = steel['largo']
-                                    save_ancho = steel['ancho']
-                                    save_alto_lateral = steel['alto_lateral']
-                                    save_alto_techado = steel['alto_techado']
-                                else:
-                                    st.error("No hay cálculo de acero disponible")
-                                    st.stop()
-                            else:  # Solo Materiales
-                                if has_materials:
-                                    materials = st.session_state.last_materials_calc
-                                    combined_data = {"tipo": "materiales", "materiales": materials}
-                                    save_largo = materials['largo']
-                                    save_ancho = materials['ancho']
-                                    save_alto_lateral = materials['alto_lateral']
-                                    save_alto_techado = materials['alto_techado']
-                                else:
-                                    st.error("No hay cálculo de materiales disponible")
-                                    st.stop()
-
-                            calc_id = database.save_calculation(
-                                client_id=st.session_state.current_client_id,
-                                project_name=project_save_name or f"Nave {save_largo}x{save_ancho}",
-                                length=save_largo,
-                                width=save_ancho,
-                                lateral_height=save_alto_lateral,
-                                roof_height=save_alto_techado,
-                                materials_dict=combined_data,
-                                total_amount=total_amount
-                            )
-                            st.success(f"✅ Cálculo guardado exitosamente: {project_save_name}")
-                            st.balloons()
-                        except Exception as e:
-                            st.error(f"❌ Error al guardar: {str(e)}")
-
-                st.markdown("### 📋 Cálculos Guardados del Cliente")
-                calculations = database.get_client_calculations(st.session_state.current_client_id)
-                if calculations:
-                    calc_df = pd.DataFrame(calculations)
-                    calc_df = calc_df[['project_name', 'length', 'width', 'total_amount', 'created_date']]
-                    calc_df.columns = ['Proyecto', 'Largo', 'Ancho', 'Monto Total', 'Fecha']
-                    st.dataframe(calc_df, use_container_width=True)
-                else:
-                    st.info("No hay cálculos guardados para este cliente")
-            else:
-                st.warning("⚠️ No hay cálculos disponibles para guardar. Realice un cálculo primero.")
+            client_name = st.text_input("Cliente", value=client['company_name'], key="client_name")
         else:
-            st.error("❌ Debe seleccionar un cliente antes de guardar un cálculo")
+            client_name = st.text_input("Cliente", placeholder="Nombre del cliente", key="client_name")
+    with col2:
+        project_name = st.text_input("Proyecto", placeholder="Nombre del proyecto", key="project_name")
+    notes = st.text_area("Notas adicionales", placeholder="Condiciones especiales, observaciones...", key="notes")
 
-    st.markdown("---")
+    # --- Import Button ---
+    if st.button("【 Importar Cálculo Completo 】", type="primary", key="import_full", use_container_width=True):
+        if 'full_calculation_result' in st.session_state and not st.session_state.full_calculation_result.empty:
+            df = st.session_state.full_calculation_result.copy()
+            steel_df = df[df["tipo"] == "Acero Estructural"].copy()
+            steel_df["toneladas"] = steel_df["peso_total"] / 1000
+            ton_columnas = steel_df[steel_df["funcion"] == "Columnas centrales"]["toneladas"].sum()
+            ton_laterales = steel_df[steel_df["funcion"] == "Columnas laterales"]["toneladas"].sum()
+            ton_tijerillas = steel_df[steel_df["funcion"] == "Tijerillas"]["toneladas"].sum()
+            ton_porticos = steel_df[steel_df["funcion"] == "Pórticos de frenado"]["toneladas"].sum()
+            ton_bracing = steel_df[steel_df["funcion"] == "Bracing (arriostramiento)"]["toneladas"].sum()
+            ton_sagrods = steel_df[steel_df["funcion"] == "Sag Rods (tensores)"]["toneladas"].sum()
+            ton_estructura = ton_columnas + ton_laterales + ton_tijerillas + ton_porticos + ton_bracing + ton_sagrods
+            ton_conexiones = ton_estructura * 0.08
+
+            materials_df = df[df["tipo"] == "Material de Cierre"].copy()
+            mat_dict = dict(zip(materials_df["perfil"], materials_df["cantidad"]))
+
+            products = [
+                {"product_name": "Estructura de Acero - Columnas", "quantity": round(ton_columnas + ton_laterales, 2), "unit_price": 1200.0},
+                {"product_name": "Estructura de Acero - Tijerillas", "quantity": round(ton_tijerillas, 2), "unit_price": 1200.0},
+                {"product_name": "Estructura de Acero - Pórticos", "quantity": round(ton_porticos, 2), "unit_price": 1200.0},
+                {"product_name": "Estructura de Acero - Correas", "quantity": round(ton_bracing + ton_sagrods, 2), "unit_price": 1200.0},
+                {"product_name": "Conexiones y Accesorios", "quantity": round(ton_conexiones, 2), "unit_price": 1500.0},
+                {"product_name": "Aluzinc Techo", "quantity": round(mat_dict.get("Aluzinc Techo", 0), 2), "unit_price": 3.5},
+                {"product_name": "Aluzinc Pared", "quantity": round(mat_dict.get("Aluzinc Pared", 0), 2), "unit_price": 3.5},
+                {"product_name": "Tornillos de Techo", "quantity": round(mat_dict.get("Tornillos", 0), 0), "unit_price": 0.15},
+                {"product_name": "Canaletas", "quantity": round(mat_dict.get("Canaletas", 0), 2), "unit_price": 12.0},
+                {"product_name": "Bajantes", "quantity": round(mat_dict.get("Bajantes", 0), 0), "unit_price": 85.0},
+            ]
+            for p in products:
+                p["subtotal"] = p["quantity"] * p["unit_price"]
+            st.session_state.quote_products = products
+            st.success("✅ Productos importados desde Cálculo Completo")
+            st.rerun()
+        else:
+            st.warning("⚠️ Ejecute primero el cálculo en la sección superior.")
+
+    # --- Manual Add & Quote Table ---
+    st.markdown("#### ➕ Agregar Producto Manual")
+    with st.form("add_product_form", clear_on_submit=True):
+        col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+        with col1:
+            new_product_name = st.text_input("Producto")
+        with col2:
+            new_quantity = st.number_input("Cantidad", min_value=0.0, step=1.0)
+        with col3:
+            new_unit_price = st.number_input("Precio Unit.", min_value=0.0, step=0.01)
+        with col4:
+            st.write("")
+            add_product = st.form_submit_button("➕")
+        if add_product and new_product_name and new_quantity > 0 and new_unit_price > 0:
+            st.session_state.quote_products = st.session_state.get('quote_products', [])
+            st.session_state.quote_products.append({
+                'product_name': new_product_name,
+                'quantity': new_quantity,
+                'unit_price': new_unit_price,
+                'subtotal': new_quantity * new_unit_price
+            })
+            st.rerun()
+
+    # --- Quote Table & Totals ---
+    if st.session_state.get('quote_products'):
+        df_prod = pd.DataFrame(st.session_state.quote_products)
+        df_prod['subtotal'] = df_prod['quantity'] * df_prod['unit_price']
+        edited = st.data_editor(
+            df_prod,
+            column_config={
+                "product_name": st.column_config.TextColumn("Producto", width="large"),
+                "quantity": st.column_config.NumberColumn("Cantidad", format="%.2f"),
+                "unit_price": st.column_config.NumberColumn("Precio Unit. ($)", format="%.2f"),
+                "subtotal": st.column_config.NumberColumn("Subtotal ($)", format="%.2f", disabled=True)
+            },
+            hide_index=True,
+            use_container_width=True,
+            num_rows="dynamic"
+        )
+        st.session_state.quote_products = edited.to_dict('records')
+
+        totals = QuotationGenerator.calculate_quote(st.session_state.quote_products)
+        st.markdown("### 💰 Resumen de Costos")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Items", f"${totals['items_total']:,.2f}")
+            st.metric("Supervisión (10%)", f"${totals['supervision']:,.2f}")
+            st.metric("Admin. (4%)", f"${totals['admin']:,.2f}")
+        with col2:
+            st.metric("Seguro (1%)", f"${totals['insurance']:,.2f}")
+            st.metric("Transporte (3%)", f"${totals['transport']:,.2f}")
+            st.metric("Imprevisto (3%)", f"${totals['contingency']:,.2f}")
+        with col3:
+            st.metric("Subtotal", f"${totals['subtotal_general']:,.2f}")
+            st.metric("ITBIS (18%)", f"${totals['itbis']:,.2f}")
+            st.markdown(f"""
+            <div style="background: #f2f2f2; padding: 1rem; border-radius: 12px; text-align: center;">
+                <div style="font-size: 20px; font-weight: bold; color: #1023c9;">TOTAL GENERAL</div>
+                <div style="font-size: 36px; font-weight: bold; color: #1023c9;">${totals['grand_total']:,.2f}</div>
+            </div>
+                """, unsafe_allow_html=True)
+
+        # --- Generate PDF ---
+        col1, col2 = st.columns(2)
+        with col1:
+            show_products_in_pdf = st.checkbox("Mostrar productos en PDF", value=True)
+        with col2:
+            include_sketch = st.checkbox("Incluir diagrama 2D", value=True)
+        if st.button("【📄 Generar PDF 】", type="primary", use_container_width=True):
+            try:
+                company_info = {
+                    'company_name': company_name,
+                    'phone': phone,
+                    'email': email,
+                    'client': client_name or "Cliente No Especificado",
+                    'project': project_name or "Proyecto No Especificado",
+                    'validity': quote_validity,
+                    'quoted_by': quoted_by,
+                    'notes': notes
+                }
+                sketch = None
+                if include_sketch and 'full_calculation_result' in st.session_state:
+                    sketch = create_building_sketch({
+                        'length': largo,
+                        'width': ancho,
+                        'wall_height': alto_lateral,
+                        'roof_height': max(0.1, alto_techado - alto_lateral)
+                    })
+                pdf = QuotationGenerator.generate_pdf(
+                    quote_data={},
+                    company_info=company_info,
+                    products=st.session_state.quote_products,
+                    totals=totals,
+                    show_products=show_products_in_pdf,
+                    create_building_sketch=sketch
+                )
+                st.download_button(
+                    "【📥 Descargar Cotización PDF】",
+                    pdf.getvalue(),
+                    f"cotizacion_{datetime.now().strftime('%Y%m%d')}.pdf",
+                    "application/pdf",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"Error generando PDF: {e}")
+    else:
+        st.info("👆 Importe productos desde el cálculo o agréguelos manualmente para generar una cotización.")
+
+    st.divider()
+
+    # ===================================================================================
+    # SECTION 3: GUARDAR CÁLCULO
+    # ===================================================================================
     st.markdown("""
-    <div style="
-        text-align: center;
-        padding: 2rem 0;
-        background: linear-gradient(to right, #0f0f19, #1a1a2e);
-        border-radius: 16px;
-        border: 1px solid rgba(0, 255, 255, 0.3);
-        color: rgba(255, 255, 255, 0.85);
-        font-size: 15px;
-        margin-top: 3rem;
-    ">
-        ➕ <strong>RIGC Industrial Calculator 2030</strong><br>
-        Sistema Avanzado con Gestión de Clientes<br>
-        © 2030 | Versión 3.0
-    </div>
+        <style>
+            /* ===== Custom Header Styling ===== */
+            .header-container {
+                text-align: center;
+                padding: 3rem 0 3rem 0;
+                margin-bottom: 2.5rem;
+                position: relative;
+            }
+
+            /* Elegant glow behind text */
+            .header-container::after {
+                content: "";
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: 280px;
+                height: 280px;
+                background: radial-gradient(circle, rgba(0,150,255,0.12) 0%, rgba(0,0,0,0) 70%);
+                filter: blur(40px);
+                z-index: 0;
+            }
+
+            .main-title {
+                position: relative;
+                z-index: 1;
+                font-size: 100px;
+                font-weight: 900;
+                background: linear-gradient(120deg, #00d4ff 0%, #007bff 45%, #9b00ff 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                text-transform: uppercase;
+                letter-spacing: 4px;
+                margin-bottom: 0.3rem;
+                line-height: 1.1;
+                animation: fadeIn 1.2s ease;
+            }
+
+            .subtitle {
+                position: relative;
+                z-index: 1;
+                font-size: 22px;
+                color: #a3a3a3;
+                font-weight: 400;
+                letter-spacing: 6px;
+                text-transform: uppercase;
+                margin-top: -4px;
+                animation: fadeIn 1.8s ease;
+            }
+
+            /* Subtle text shadow glow */
+            .main-title, .subtitle {
+                text-shadow: 0px 0px 20px rgba(0, 100, 255, 0.15);
+            }
+
+            /* Animation */
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+
+            /* Responsive */
+            @media (max-width: 768px) {
+                .main-title {
+                    font-size: 50px;
+                    letter-spacing: 3px;
+                }
+                .subtitle {
+                    font-size: 18px;
+                    letter-spacing: 4px;
+                }
+            }
+        </style>
+
+        <div class="header-container">
+            <h1 class="main-title">GUARDAR CÁLCULO</h1>
+            <p class="subtitle">ESTRUCTURA ➕ MATERIALES</p>
+        </div>
     """, unsafe_allow_html=True)
+
+    if st.session_state.current_client_id:
+        with st.form("save_calc_form"):
+            project_save_name = st.text_input("Nombre del Proyecto", value=project_name or f"Nave {largo}x{ancho}")
+            total_amount = st.number_input("Monto Total (USD)", value=float(totals.get('grand_total', 0)) if 'totals' in locals() else 0.0, min_value=0.0)
+            save_notes = st.text_area("Notas", value=notes)
+            if st.form_submit_button("💾 Guardar Cálculo en Base de Datos", type="primary", use_container_width=True):
+                try:
+                    calc_data = {
+                        "largo": largo,
+                        "ancho": ancho,
+                        "alto_lateral": alto_lateral,
+                        "alto_techado": alto_techado,
+                        "distancia_ejes": distancia,
+                        "acero_result": st.session_state.get('full_calculation_result', {}).to_dict() if 'full_calculation_result' in st.session_state else {}
+                    }
+                    calc_id = database.save_calculation(
+                        client_id=st.session_state.current_client_id,
+                        project_name=project_save_name,
+                        length=largo,
+                        width=ancho,
+                        lateral_height=alto_lateral,
+                        roof_height=alto_techado,
+                        materials_dict=calc_data,
+                        total_amount=total_amount
+                    )
+                    st.success(f"✅ Cálculo guardado: {project_save_name}")
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"❌ Error al guardar: {e}")
+    else:
+        st.error("❌ Seleccione un cliente en la barra lateral para guardar cálculos.")
+
+   # === FOOTER ===
+    st.markdown("""
+        <style>
+            .footer {
+                text-align: center;
+                padding: 3rem 0 2rem 0;
+                color: #a6a6a6;
+                font-size: 15px;
+                position: relative;
+                margin-top: 4rem;
+                animation: fadeIn 1.2s ease;
+            }
+
+            .footer-title {
+                background: linear-gradient(120deg, #00d4ff 0%, #007bff 45%, #9b00ff 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                font-weight: 700;
+                font-size: 18px;
+                letter-spacing: 2px;
+                text-transform: uppercase;
+                text-shadow: 0px 0px 16px rgba(0, 100, 255, 0.12);
+                margin-bottom: 0.5rem;
+                display: inline-block;
+            }
+
+            .footer::before {
+                content: "";
+                display: block;
+                width: 140px;
+                height: 3px;
+                margin: 0 auto 1.2rem auto;
+                background: linear-gradient(90deg, rgba(0,212,255,0.8), rgba(155,0,255,0.8));
+                border-radius: 3px;
+                box-shadow: 0px 0px 10px rgba(0, 100, 255, 0.25);
+            }
+
+            .footer small {
+                display: block;
+                margin-top: 0.5rem;
+                font-size: 13px;
+                color: #8a8a8a;
+                letter-spacing: 1px;
+            }
+
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+
+            @media (max-width: 768px) {
+                .footer {
+                    font-size: 14px;
+                    padding: 2rem 1rem;
+                }
+                .footer-title {
+                    font-size: 16px;
+                    letter-spacing: 1px;
+                }
+            }
+        </style>
+
+        <div class="footer">
+            <div class="footer-title">RIGC Industrial Calculator 2030</div>
+            <div>Sistema Avanzado con Gestión de Clientes</div>
+            <small>© 2030 | Versión Unificada</small>
+        </div>
+    """, unsafe_allow_html=True)
+
 
 # --- ROUTER ---
 if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
-
 
