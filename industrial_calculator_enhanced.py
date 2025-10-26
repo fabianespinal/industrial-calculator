@@ -816,7 +816,7 @@ def show_main_app():
             address = st.text_area("Dirección")
             tax_id = st.text_input("RNC/Cédula")
             notes = st.text_area("Notas")
-            if st.form_submit_button("💾 Guardar Cliente"):
+            if st.form_submit_button("🟥 Guardar Cliente"):
                 if company:
                     client_id = database.add_new_client(
                         company_name=company,
@@ -833,7 +833,7 @@ def show_main_app():
                 else:
                     st.sidebar.error("Nombre de empresa requerido")
     st.sidebar.markdown("---")
-    if st.sidebar.button("🚪 Cerrar Sesión", key="logout_btn"):
+    if st.sidebar.button("🟥 Cerrar Sesión", key="logout_btn"):
         st.session_state.authenticated = False
         st.session_state.username = ""
         st.rerun()
@@ -1103,7 +1103,7 @@ def show_main_app():
             st.metric("Sag Rods", f"{profile_weights.get(sagrods, 0)} lbs/ft")
 
     # --- CALCULATE BUTTON ---
-    if st.button("【 CALCULAR ESTRUCTURA COMPLETA + MATERIALES 】", type="primary", key="calc_full_btn", use_container_width=True):
+    if st.button("🟥 CALCULAR ESTRUCTURA COMPLETA + MATERIALES", type="primary", key="calc_full_btn", use_container_width=True):
         try:
             # ===== STEEL =====
             num_ejes = int((largo / distancia) + 1)
@@ -1323,7 +1323,7 @@ def show_main_app():
     notes = st.text_area("Notas adicionales", placeholder="Condiciones especiales, observaciones...", key="notes")
 
     # --- Import Button ---
-    if st.button("【 Importar Cálculo Completo 】", type="primary", key="import_full", use_container_width=True):
+    if st.button("🟥 Importar Cálculo Completo", type="primary", key="import_full", use_container_width=True):
         if 'full_calculation_result' in st.session_state and not st.session_state.full_calculation_result.empty:
             df = st.session_state.full_calculation_result.copy()
             steel_df = df[df["tipo"] == "Acero Estructural"].copy()
@@ -1428,7 +1428,7 @@ def show_main_app():
             show_products_in_pdf = st.checkbox("Mostrar productos en PDF", value=True)
         with col2:
             include_sketch = st.checkbox("Incluir diagrama 2D", value=True)
-        if st.button("【📄 Generar PDF 】", type="primary", use_container_width=True):
+        if st.button("🟥Generar PDF", type="primary", use_container_width=True):
             try:
                 company_info = {
                     'company_name': company_name,
@@ -1457,7 +1457,7 @@ def show_main_app():
                     create_building_sketch=sketch
                 )
                 st.download_button(
-                    "【📥 Descargar Cotización PDF】",
+                    "🟥 Descargar Cotización PDF ⏬",
                     pdf.getvalue(),
                     f"cotizacion_{datetime.now().strftime('%Y%m%d')}.pdf",
                     "application/pdf",
@@ -1559,7 +1559,7 @@ def show_main_app():
             project_save_name = st.text_input("Nombre del Proyecto", value=project_name or f"Nave {largo}x{ancho}")
             total_amount = st.number_input("Monto Total (USD)", value=float(totals.get('grand_total', 0)) if 'totals' in locals() else 0.0, min_value=0.0)
             save_notes = st.text_area("Notas", value=notes)
-            if st.form_submit_button("💾 Guardar Cálculo en Base de Datos", type="primary", use_container_width=True):
+            if st.form_submit_button("🟥 Guardar Cálculo en Base de Datos", type="primary", use_container_width=True):
                 try:
                     calc_data = {
                         "largo": largo,
@@ -1661,4 +1661,5 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
+
 
