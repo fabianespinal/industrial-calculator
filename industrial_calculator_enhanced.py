@@ -153,6 +153,7 @@ def create_building_sketch(dimensions):
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 :root {
     --primary: #5e64ff;
     --text-color: #333333;
@@ -162,14 +163,17 @@ st.markdown("""
     --border-color: #dee2e6;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
+
 .main, .stApp {
     background: var(--bg-color);
     color: var(--text-color);
     font-family: 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     min-height: 100vh;
 }
+
 #MainMenu, footer, header { visibility: hidden; }
 .stDeployButton { display: none; }
+
 .login-container {
     max-width: 500px;
     margin: 5rem auto;
@@ -179,6 +183,7 @@ st.markdown("""
     border-radius: 8px;
     box-shadow: var(--shadow);
 }
+
 .login-title {
     text-align: center;
     font-size: 32px;
@@ -188,19 +193,24 @@ st.markdown("""
     text-transform: uppercase;
     letter-spacing: 1px;
 }
+
+/* --- Text input --- */
 .stTextInput > div > div > input {
-    background: var(--bg-color) !important;
-    color: var(--text-color) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: 4px !important;
+    background: #d9d9d9 !important;
+    color: #1023c9 !important;
+    border: 1px solid #999 !important;
+    border-radius: 6px !important;
     padding: 10px 15px !important;
-    font-size: 14px !important;
+    font-size: 16px !important;
+    font-weight: bold !important;
     transition: all 0.3s ease !important;
 }
 .stTextInput > div > div > input:focus {
     border-color: var(--primary) !important;
     box-shadow: 0 0 0 3px rgba(94, 100, 255, 0.1) !important;
 }
+
+/* --- Button --- */
 .stButton > button {
     background-color: var(--primary) !important;
     color: white !important;
@@ -219,6 +229,8 @@ st.markdown("""
     transform: translateY(-2px) !important;
     box-shadow: 0 2px 5px rgba(94, 100, 255, 0.2) !important;
 }
+
+/* --- Tabs --- */
 .stTabs [data-baseweb="tab-list"] {
     background: var(--card-bg);
     border: 1px solid var(--border-color);
@@ -247,7 +259,9 @@ st.markdown("""
     border: 1px solid var(--primary) !important;
     color: var(--primary) !important;
 }
-.result-card {
+
+/* --- Cards --- */
+.result-card, .metric-card {
     background: var(--card-bg);
     border: 1px solid var(--border-color);
     border-radius: 8px;
@@ -256,40 +270,49 @@ st.markdown("""
     box-shadow: var(--shadow);
     text-align: center;
 }
-.metric-card {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 1rem;
-    margin: 0.5rem 0;
-    text-align: center;
+
+/* --- Selectbox --- */
+div[data-baseweb="select"] > div {
+    background-color: #d9d9d9 !important;
+    border: 1px solid #999 !important;
+    border-radius: 6px !important;
+    font-size: 16px !important;
+    font-weight: bold !important;
+    color: #1023c9 !important;
 }
-.stSelectbox > div > div {
-    background: var(--bg-color) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: 4px !important;
+div[data-baseweb="select"] * {
+    color: #1023c9 !important;
+    font-weight: bold !important;
 }
-.stNumberInput > div > div > input {
-    background: var(--bg-color) !important;
-    color: var(--text-color) !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: 4px !important;
+
+/* --- Number input --- */
+input[type="number"] {
+    background-color: #d9d9d9 !important;
+    color: #1023c9 !important;
+    font-size: 16px !important;
+    font-weight: bold !important;
+    border: 1px solid #999 !important;
+    border-radius: 6px !important;
 }
+
+/* --- DataFrame --- */
 .stDataFrame {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 8px;
+    background-color: #e6e6e6 !important;
+    border: 1px solid #999 !important;
+    border-radius: 8px !important;
+    padding: 8px !important;
 }
+
+/* --- Metrics --- */
 [data-testid="stMetricValue"] {
-    color: var(--primary);
-    font-size: 28px;
-    font-weight: 600;
+    color: #1023c9 !important;
+    font-size: 28px !important;
+    font-weight: 700 !important;
 }
 [data-testid="stMetricLabel"] {
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 500;
+    color: #666 !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -1661,6 +1684,7 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
+
 
 
 
