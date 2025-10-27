@@ -165,7 +165,7 @@ st.markdown("""
 .main, .stApp {
     background: var(--bg-color);
     color: var(--text-color);
-    font-family: 'Inter', sans-serif;
+    font-family: 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     min-height: 100vh;
 }
 #MainMenu, footer, header { visibility: hidden; }
@@ -1661,5 +1661,6 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
+
 
 
