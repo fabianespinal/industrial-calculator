@@ -660,7 +660,7 @@ class QuotationGenerator:
             alignment=TA_RIGHT,
             spaceAfter=12
         )
-        story.append(Paragraph("ESTIMADO", title_style))
+        story.append(Paragraph("ESTIMADO PRELIMINAR", title_style))
         info_data = [
             ['INFORMACIÓN DEL PROYECTO', ''],
             ['Cliente:', company_info['client']],
@@ -767,7 +767,7 @@ class QuotationGenerator:
                 if note.strip():
                     story.append(Paragraph(note.strip(), notes_style))
         disclaimer_text = (
-            "<b>Aviso legal:</b> <b>Esta cotización es solo un estimado.</b> "
+            "<b>Aviso legal:</b> <b>Esta cotización es solo un estimado preliminar.</b> "
             "Todos los precios están sujetos a cambios. El precio final será confirmado al momento de emitir la orden de compra. "
             "Será necesaria una cotización formal para validar los términos y condiciones definitivos."
         )
@@ -1684,6 +1684,7 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
+
 
 
 
