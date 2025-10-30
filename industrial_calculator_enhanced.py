@@ -185,8 +185,6 @@ def create_building_sketch(dimensions):
     # Create 3D Sketch
 
 def create_3d_building_sketch(dimensions):
-    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-    import numpy as np
 
     length = dimensions.get('length', 20.0)
     width = dimensions.get('width', 15.0)
@@ -383,17 +381,18 @@ def show_login_page():
                 st.rerun()
 
 # --- CALCULATION FUNCTIONS ---
-def calculate_materials(largo, ancho, alto_lateral, alto_techado):
+def calculate_materials(largo, ancho, alto_lateral, alto_techado, distancia):
     perimetro = 2 * (largo + ancho)
     aluzinc_techo = largo * ancho * 1.1 * 3.28
     aluzinc_pared = perimetro * alto_lateral * 3.28
     correa_techo = (ancho + 2) * largo * 3.28
-    correa_pared = perimetro * ((alto_techado - alto_lateral) / 2 + 1) * 3.28
+    correa_pared = ((ancho * 2) + (largo * 2)) * (alto_lateral + 1) * 3.28
     tornillos_techo = (aluzinc_techo + aluzinc_pared) * 5
     cubrefaltas = ((ancho * 2) + (alto_lateral * 4)) * 1.1 * 3.28
     canaletas = largo * 2 * 1.1 * 3.28
-    bajantes = int(largo / 7) + 1
+    bajantes = ((largo / distancia) + 1) * 2
     caballetes = largo * 1.1 * 3.28
+
     return {
         'aluzinc_techo': aluzinc_techo,
         'aluzinc_pared': aluzinc_pared,
@@ -407,7 +406,8 @@ def calculate_materials(largo, ancho, alto_lateral, alto_techado):
         'largo': largo,
         'ancho': ancho,
         'alto_lateral': alto_lateral,
-        'alto_techado': alto_techado
+        'alto_techado': alto_techado,
+        'distancia': distancia
     }
 
 # --- QUOTATION GENERATOR CLASS ---
@@ -757,22 +757,25 @@ def show_main_app():
         default_alto_techado = 9
         default_distancia = 7.27
 
-    st.markdown("### ⚙️ Configuración de la Estructura")
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        largo = st.number_input("Largo (m)", min_value=10.0, max_value=200.0, value=float(default_largo), step=0.1, key="steel_largo")
-    with col2:
-        ancho = st.number_input("Ancho (m)", min_value=10.0, max_value=100.0, value=float(default_ancho), step=0.1, key="steel_ancho")
-    with col3:
-        alto_lateral = st.number_input("Altura Lateral (m)", min_value=4.0, max_value=20.0, value=float(default_alto_lateral), step=0.1, key="steel_alto_lateral")
-    with col4:
-        alto_techado = st.number_input("Altura Techado (m)", min_value=5.0, max_value=25.0, value=float(default_alto_techado), step=0.1, key="steel_alto_techado")
-    with col5:
-        distancia = st.number_input("Distancia entre ejes (m)", min_value=0.1, max_value=20.0, value=float(default_distancia), step=0.01, key="axis_distance")
+# Inputs
+        st.markdown("### ⚙️ Configuración de la Estructura")
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            largo = st.number_input("Largo (m)", min_value=10.0, max_value=200.0, value=float(default_largo), step=0.1, key="steel_largo")
+        with col2:
+            ancho = st.number_input("Ancho (m)", min_value=10.0, max_value=100.0, value=float(default_ancho), step=0.1, key="steel_ancho")
+        with col3:
+            alto_lateral = st.number_input("Altura Lateral (m)", min_value=4.0, max_value=20.0, value=float(default_alto_lateral), step=0.1, key="steel_alto_lateral")
+        with col4:
+            alto_techado = st.number_input("Altura Techado (m)", min_value=5.0, max_value=25.0, value=float(default_alto_techado), step=0.1, key="steel_alto_techado")
+        with col5:
+            distancia = st.number_input("Distancia entre ejes (m)", min_value=0.1, max_value=20.0, value=float(default_distancia), step=0.01, key="axis_distance")
 
-    if alto_techado < alto_lateral:
-        st.warning("⚠️ La altura del techado debe ser mayor o igual a la altura lateral.")
-        st.stop()
+        # Validación
+        if alto_techado < alto_lateral:
+            st.warning("⚠️ La altura del techado debe ser mayor o igual a la altura lateral.")
+            st.stop()
+
 
     # Profile selection
     st.markdown("### 🔧 Selección de Perfiles")
@@ -839,7 +842,7 @@ def show_main_app():
             df_steel["peso_total"] = df_steel["peso_m"] * df_steel["cantidad"] * df_steel["longitud"]
             df_steel["tipo"] = "Acero Estructural"
 
-            mats = calculate_materials(largo, ancho, alto_lateral, alto_techado)
+            mats = calculate_materials(largo, ancho, alto_lateral, alto_techado, distancia)
             materials_data = [
                 {"perfil": "Aluzinc Techo", "funcion": "Cubierta", "peso_m": 0, "cantidad": mats['aluzinc_techo'], "longitud": 0, "eje": "Cubierta", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
                 {"perfil": "Aluzinc Pared", "funcion": "Muros", "peso_m": 0, "cantidad": mats['aluzinc_pared'], "longitud": 0, "eje": "Perímetro", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
