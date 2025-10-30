@@ -1,0 +1,235 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+    --primary: #1FBAD6;       /* Uber's accent color */
+    --text-color: #000000;    /* Uber uses near-black text */
+    --text-muted: #666666;
+    --bg-color: #ffffff;
+    --card-bg: #ffffff;
+    --border-color: #e0e0e0;
+    --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.main, .stApp {
+    background: var(--bg-color);
+    color: var(--text-color);
+    font-family: 'Inter', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
+    min-height: 100vh;
+}
+
+#MainMenu, footer, header { visibility: hidden; }
+.stDeployButton { display: none; }
+
+.login-container {
+    max-width: 500px;
+    margin: 5rem auto;
+    padding: 2.5rem;
+    background: var(--card-bg);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border-color);
+}
+
+.login-title {
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 1.5rem;
+    color: var(--text-color);
+    text-transform: none;
+    letter-spacing: -0.5px;
+}
+
+/* Text input */
+.stTextInput > div > div > input {
+    background: #f5f5f5 !important;
+    color: var(--text-color) !important;
+    border: 1px solid #ddd !important;
+    border-radius: 8px !important;
+    padding: 12px 16px !important;
+    font-size: 16px !important;
+    font-weight: 500 !important;
+    transition: all 0.2s ease !important;
+}
+.stTextInput > div > div > input:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px rgba(31, 186, 214, 0.15) !important;
+}
+
+/* --- Dark button base --- */
+.stButton > button {
+    background-color: #668dd6 !important;  /* Dark gray/black */
+    color: #f2f2f2 !important;             /* Light text */
+    border: none !important;
+    font-weight: 700 !important;
+    padding: 12px 24px !important;
+    border-radius: 8px !important;
+    font-size: 16px !important;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+    box-shadow: none !important;
+    transition: all 0.2s ease !important;
+    width: 100%;
+}
+
+/* --- Light hover effect --- */
+.stButton > button:hover {
+    background-color: #d9d9d9 !important;  /* Light gray hover */
+    color: #1023c9 !important;             /* Dark blue text on hover */
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    background: transparent;
+    border-bottom: 1px solid var(--border-color);
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent;
+    color: var(--text-muted);
+    border: none;
+    padding: 12px 24px;
+    border-radius: 0 !important;
+    font-weight: 600;
+    font-size: 16px;
+    transition: all 0.2s ease;
+    position: relative;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    color: var(--primary);
+}
+.stTabs [aria-selected="true"] {
+    color: var(--primary) !important;
+}
+.stTabs [aria-selected="true"]::after {
+    content: "";
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--primary);
+    border-radius: 2px;
+}
+
+/* Cards */
+.result-card, .metric-card {
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin: 1rem 0;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border-color);
+    text-align: center;
+}
+
+/* Selectbox */
+div[data-baseweb="select"] > div {
+    background-color: #f5f5f5 !important;
+    border: 1px solid #ddd !important;
+    border-radius: 8px !important;
+    font-size: 16px !important;
+    font-weight: 500 !important;
+    color: var(--text-color) !important;
+}
+div[data-baseweb="select"] * {
+    color: var(--text-color) !important;
+    font-weight: 500 !important;
+}
+
+/* Number input */
+input[type="number"] {
+    background-color: #f5f5f5 !important;
+    color: var(--text-color) !important;
+    font-size: 16px !important;
+    font-weight: 500 !important;
+    border: 1px solid #ddd !important;
+    border-radius: 8px !important;
+}
+
+/* DataFrame */
+.stDataFrame {
+    background-color: #fafafa !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 12px !important;
+    padding: 12px !important;
+}
+
+/* Metrics */
+[data-testid="stMetricValue"] {
+    color: var(--primary) !important;
+    font-size: 32px !important;
+    font-weight: 700 !important;
+}
+[data-testid="stMetricLabel"] {
+    color: var(--text-muted) !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+/* Login Page – Uber uses light mode, so remove dark theme */
+html, body, [data-testid="stAppViewContainer"] {
+    background: var(--bg-color);
+    overflow: auto;
+}
+
+/* Headers & Titles – Simplified, Uber-style */
+.header-container {
+    text-align: center;
+    padding: 2.5rem 0;
+    margin-bottom: 2rem;
+}
+.main-title {
+    font-size: 48px;
+    font-weight: 800;
+    color: var(--text-color);
+    text-transform: none;
+    letter-spacing: -1px;
+    margin-bottom: 0.5rem;
+    line-height: 1.1;
+}
+.subtitle {
+    font-size: 18px;
+    color: var(--text-muted);
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0.5px;
+}
+
+/* Footer */
+.footer {
+    text-align: center;
+    padding: 2.5rem 0 1.5rem;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+.footer-title {
+    color: var(--text-color);
+    font-weight: 700;
+    font-size: 16px;
+    text-transform: none;
+    margin-bottom: 0.5rem;
+    display: inline-block;
+}
+.footer small {
+    display: block;
+    margin-top: 0.5rem;
+    font-size: 12px;
+    color: #999;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .login-container {
+        margin: 2rem auto;
+        padding: 1.5rem;
+    }
+    .main-title { font-size: 36px; }
+    .subtitle { font-size: 16px; }
+}
