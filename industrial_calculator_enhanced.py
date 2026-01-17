@@ -1642,7 +1642,7 @@ def show_main_app():
                             # Add notes section if notes exist
                             if quote_data.get('notes'):
                                 pdf.notes_section(quote_data['notes'])
-                            pdf_bytes = bytes(pdf.output())
+                            pdf_bytes = pdf.output(dest="S").encode("latin-1")
                             
                             st.download_button(
                                 "📄 PDF",
@@ -1704,7 +1704,7 @@ def show_main_app():
                         # Add notes section if notes exist
                         if quote_data.get('notes'):
                             pdf.notes_section(quote_data['notes'])
-                        pdf_bytes = bytes(pdf.output())
+                        pdf_bytes = pdf.output(dest="S").encode("latin-1")
                         
                         st.download_button(
                             "📥 Descargar Factura PDF",
