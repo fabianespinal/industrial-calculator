@@ -2,687 +2,1028 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from io import BytesIO
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.lib.units import inch
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_RIGHT
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+import sqlite3
 import os
-import re
-import math
-from math import sqrt
+from fpdf import FPDF
+import ast
 
-# Page configuration - MUST BE FIRST STREAMLIT COMMAND
-st.set_page_config(
-    page_title="RIGC - ERP",
-    page_icon="➕",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# ----------------------------
+# DATABASE SETUP (SQLite)
+# ----------------------------
 
-# --- LOAD EXTERNAL CSS ---
-def load_css():
-    if os.path.exists("style.css"):
-        with open("style.css") as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-    else:
-        st.warning("⚠️ style.css not found. Using default styling.")
+DB_PATH = "rigc_app.db"
+PRODUCTS_CSV_PATH = "products.csv"
 
-load_css()
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-# Initialize the database AFTER page config
-import database
-database.setup_database()
+def init_db():
+    with get_db_connection() as conn:
+        cur = conn.cursor()
 
-# --- LOAD PROFILE WEIGHTS FROM EXCEL ---
-@st.cache_data(ttl=60)
-def load_steel_profiles():
-    import os
-    file_path = "steel_profiles.xlsx"
-    if not os.path.exists(file_path):
-        st.error(f"❌ File not found: {os.path.abspath(file_path)}")
-        return {}
-    try:
-        df = pd.read_excel(file_path)
-        df.columns = df.columns.str.strip().str.lower()  # normalize column names
-        if "profile" in df.columns and "weight_lbs_per_ft" in df.columns:
-            return dict(zip(df["profile"], df["weight_lbs_per_ft"]))
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_name TEXT NOT NULL,
+                contact_name TEXT,
+                email TEXT,
+                phone TEXT,
+                address TEXT,
+                tax_id TEXT,
+                notes TEXT
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                unit_price REAL NOT NULL
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS quotes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                quote_id TEXT UNIQUE NOT NULL,
+                client_id INTEGER NOT NULL,
+                project_name TEXT,
+                date TEXT NOT NULL,
+                total_amount REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Draft',
+                notes TEXT,
+                included_charges TEXT,
+                FOREIGN KEY (client_id) REFERENCES clients(id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS quote_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                quote_id TEXT NOT NULL,
+                product_name TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                unit_price REAL NOT NULL,
+                discount_type TEXT DEFAULT 'none',
+                discount_value REAL DEFAULT 0,
+                auto_imported BOOLEAN DEFAULT 0,
+                FOREIGN KEY (quote_id) REFERENCES quotes(quote_id)
+            )
+        """)
+        
+        # Migration: Add discount columns if they don't exist
+        try:
+            cur.execute("SELECT discount_type FROM quote_items LIMIT 1")
+        except sqlite3.OperationalError:
+            # Columns don't exist, add them
+            cur.execute("ALTER TABLE quote_items ADD COLUMN discount_type TEXT DEFAULT 'none'")
+            cur.execute("ALTER TABLE quote_items ADD COLUMN discount_value REAL DEFAULT 0")
+            conn.commit()
+
+        cur.execute("SELECT COUNT(*) FROM products")
+        if cur.fetchone()[0] == 0:
+            samples = [
+                ("Steel Beam IPE 200", "European standard I-beam", 125.50),
+                ("Galvanized Sheet 2mm", "Corrosion-resistant roofing", 45.75),
+                ("Anchor Bolts M20", "Heavy-duty foundation bolts", 8.90),
+            ]
+            cur.executemany(
+                "INSERT INTO products (name, description, unit_price) VALUES (?, ?, ?)",
+                samples
+            )
+        conn.commit()
+
+if not os.path.exists(DB_PATH):
+    init_db()
+else:
+    # Run migration on existing database
+    init_db()
+
+# ----------------------------
+# HELPER FUNCTIONS
+# ----------------------------
+
+def query_db(query, params=(), fetch_one=False, fetch_all=False):
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        if fetch_one:
+            return cur.fetchone()
+        elif fetch_all:
+            return cur.fetchall()
         else:
-            st.error(f"❌ Columnas no válidas. Encontradas: {list(df.columns)}")
-            return {}
+            conn.commit()
+            return None
+
+def get_next_quote_id():
+    year = datetime.now().year
+    result = query_db(
+        f"SELECT quote_id FROM quotes WHERE quote_id LIKE 'COT-{year}-%' ORDER BY quote_id DESC LIMIT 1",
+        fetch_one=True
+    )
+    if not result:
+        return f"COT-{year}-001"
+    last_id = result[0]
+    try:
+        num = int(last_id.split("-")[-1])
+        return f"COT-{year}-{num+1:03d}"
+    except:
+        return f"COT-{year}-001"
+
+def add_client(company, contact="", email="", phone="", address="", tax_id="", notes=""):
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO clients (company_name, contact_name, email, phone, address, tax_id, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (company, contact, email, phone, address, tax_id, notes))
+        conn.commit()
+        return cur.lastrowid
+
+def get_all_clients():
+    rows = query_db("SELECT * FROM clients ORDER BY company_name", fetch_all=True)
+    return [dict(row) for row in rows]
+
+def get_client_by_id(client_id):
+    row = query_db("SELECT * FROM clients WHERE id = ?", (client_id,), fetch_one=True)
+    return dict(row) if row else None
+
+def save_quote_to_db(client_id, project_name, items, total, notes, included_charges, status="Draft"):
+    quote_id = get_next_quote_id()
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    charges_str = str(included_charges)
+
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO quotes (quote_id, client_id, project_name, date, total_amount, status, notes, included_charges)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (quote_id, client_id, project_name, date_str, total, status, notes, charges_str))
+        
+        for item in items:
+            cur.execute("""
+                INSERT INTO quote_items (quote_id, product_name, quantity, unit_price, discount_type, discount_value, auto_imported)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (quote_id, item["product_name"], item["quantity"], item["unit_price"],
+                  item.get("discount_type", "none"), item.get("discount_value", 0),
+                  int(item.get("auto_imported", False))))
+        conn.commit()
+    return quote_id
+
+def update_quote_status(quote_id, status):
+    """Update quote status and convert quote ID to invoice ID when converting to invoice"""
+    if status == "Invoiced":
+        # Convert COT- to INV- when converting to invoice
+        invoice_id = quote_id.replace("COT-", "INV-")
+        
+        # Check if invoice ID already exists
+        existing = query_db("SELECT quote_id FROM quotes WHERE quote_id = ?", (invoice_id,), fetch_one=True)
+        if existing:
+            # If it already exists, just update the status
+            query_db("UPDATE quotes SET status = ? WHERE quote_id = ?", (status, quote_id))
+            return quote_id
+        
+        # Update quote_items first (foreign key constraint)
+        query_db("UPDATE quote_items SET quote_id = ? WHERE quote_id = ?", (invoice_id, quote_id))
+        # Then update quotes
+        query_db("UPDATE quotes SET status = ?, quote_id = ? WHERE quote_id = ?", (status, invoice_id, quote_id))
+        return invoice_id
+    else:
+        query_db("UPDATE quotes SET status = ? WHERE quote_id = ?", (status, quote_id))
+        return quote_id
+
+def get_quote_by_id(quote_id):
+    quote_row = query_db("SELECT * FROM quotes WHERE quote_id = ?", (quote_id,), fetch_one=True)
+    if not quote_row:
+        return None, None
+    items_rows = query_db("SELECT * FROM quote_items WHERE quote_id = ?", (quote_id,), fetch_all=True)
+    items = [dict(row) for row in items_rows]
+    return dict(quote_row), items
+
+def delete_quote(quote_id):
+    """Delete a quote and all its items"""
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        # Delete items first (foreign key)
+        cur.execute("DELETE FROM quote_items WHERE quote_id = ?", (quote_id,))
+        # Then delete quote
+        cur.execute("DELETE FROM quotes WHERE quote_id = ?", (quote_id,))
+        conn.commit()
+
+def get_all_quotes_for_client(client_id):
+    """Get all quotes for a specific client"""
+    quotes_rows = query_db(
+        "SELECT quote_id, project_name, date, total_amount, status, notes, included_charges FROM quotes WHERE client_id = ? ORDER BY date DESC",
+        (client_id,),
+        fetch_all=True
+    )
+    return [dict(row) for row in quotes_rows]
+
+def get_products_for_dropdown():
+    rows = query_db("SELECT id, name, description, unit_price FROM products ORDER BY name", fetch_all=True)
+    return [dict(row) for row in rows]
+
+def add_product(name, description, unit_price):
+    """Add a new product to the database"""
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO products (name, description, unit_price)
+                VALUES (?, ?, ?)
+            """, (name, description, unit_price))
+            conn.commit()
+            return cur.lastrowid
+    except sqlite3.IntegrityError:
+        return None  # Product name already exists
+
+def update_product(product_id, name, description, unit_price):
+    """Update an existing product"""
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE products 
+                SET name = ?, description = ?, unit_price = ?
+                WHERE id = ?
+            """, (name, description, unit_price, product_id))
+            conn.commit()
+            return True
+    except sqlite3.IntegrityError:
+        return False
+
+def delete_product(product_id):
+    """Delete a product"""
+    query_db("DELETE FROM products WHERE id = ?", (product_id,))
+
+def sync_products_from_csv(csv_file_path=PRODUCTS_CSV_PATH):
+    """Sync products from CSV file to database"""
+    if not os.path.exists(csv_file_path):
+        return None, "CSV file not found"
+    
+    try:
+        # Read CSV
+        df = pd.read_csv(csv_file_path)
+        
+        # Validate required columns
+        required_columns = ['name', 'unit_price']
+        if not all(col in df.columns for col in required_columns):
+            return None, f"CSV must have columns: {', '.join(required_columns)}"
+        
+        # Optional description column
+        if 'description' not in df.columns:
+            df['description'] = ''
+        
+        # Clean data
+        df['name'] = df['name'].str.strip()
+        df['description'] = df['description'].fillna('').str.strip()
+        df['unit_price'] = pd.to_numeric(df['unit_price'], errors='coerce')
+        
+        # Remove invalid rows
+        df = df.dropna(subset=['name', 'unit_price'])
+        df = df[df['unit_price'] > 0]
+        
+        if df.empty:
+            return None, "No valid products found in CSV"
+        
+        # Sync to database
+        added = 0
+        updated = 0
+        errors = []
+        
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            
+            for _, row in df.iterrows():
+                try:
+                    # Check if product exists
+                    existing = cur.execute(
+                        "SELECT id FROM products WHERE name = ?", 
+                        (row['name'],)
+                    ).fetchone()
+                    
+                    if existing:
+                        # Update existing product
+                        cur.execute("""
+                            UPDATE products 
+                            SET description = ?, unit_price = ?
+                            WHERE name = ?
+                        """, (row['description'], row['unit_price'], row['name']))
+                        updated += 1
+                    else:
+                        # Insert new product
+                        cur.execute("""
+                            INSERT INTO products (name, description, unit_price)
+                            VALUES (?, ?, ?)
+                        """, (row['name'], row['description'], row['unit_price']))
+                        added += 1
+                except Exception as e:
+                    errors.append(f"{row['name']}: {str(e)}")
+            
+            conn.commit()
+        
+        message = f"✅ Sincronizado: {added} agregados, {updated} actualizados"
+        if errors:
+            message += f"\n⚠️ {len(errors)} errores"
+        
+        return {'added': added, 'updated': updated, 'errors': errors}, message
+        
     except Exception as e:
-        st.error(f"❌ Error loading {file_path}: {e}")
-        return {}
+        return None, f"Error reading CSV: {str(e)}"
 
-profile_weights = load_steel_profiles()
-if not profile_weights:
-    st.stop()
+def create_sample_csv():
+    """Create a sample products.csv file"""
+    sample_data = {
+        'name': [
+            'Steel Beam IPE 200',
+            'Galvanized Sheet 2mm',
+            'Anchor Bolts M20',
+            'Concrete Mix 25MPa',
+            'Rebar 12mm'
+        ],
+        'description': [
+            'European standard I-beam',
+            'Corrosion-resistant roofing',
+            'Heavy-duty foundation bolts',
+            'High-strength concrete',
+            'Reinforcement steel bar'
+        ],
+        'unit_price': [125.50, 45.75, 8.90, 95.00, 12.50]
+    }
+    
+    df = pd.DataFrame(sample_data)
+    df.to_csv(PRODUCTS_CSV_PATH, index=False)
+    return df
 
-# Initialize session state variables for client management
-if 'current_client_id' not in st.session_state:
-    st.session_state.current_client_id = None
-if 'current_calculation' not in st.session_state:
-    st.session_state.current_calculation = None
+# ----------------------------
+# QUOTATION LOGIC
+# ----------------------------
 
-# --- AUTHENTICATION CONFIG ---
+def calculate_item_discount(unit_price, quantity, discount_type, discount_value):
+    """Calculate discount for a single item"""
+    subtotal = unit_price * quantity
+    if discount_type == "percentage":
+        discount_amount = subtotal * (discount_value / 100)
+    elif discount_type == "fixed":
+        discount_amount = discount_value
+    else:
+        discount_amount = 0
+    return discount_amount
+
+def calculate_quote(products, included_charges):
+    items_total = 0
+    total_discounts = 0
+    
+    for p in products:
+        qty = float(p.get('quantity', 0))
+        price = float(p.get('unit_price', 0))
+        discount_type = p.get('discount_type', 'none')
+        discount_value = float(p.get('discount_value', 0))
+        
+        subtotal = qty * price
+        discount = calculate_item_discount(price, qty, discount_type, discount_value)
+        
+        items_total += subtotal
+        total_discounts += discount
+    
+    # Apply discounts first
+    items_after_discount = items_total - total_discounts
+    
+    supervision = items_after_discount * 0.10 if included_charges.get('supervision', True) else 0.0
+    admin = items_after_discount * 0.04 if included_charges.get('admin', True) else 0.0
+    insurance = items_after_discount * 0.01 if included_charges.get('insurance', True) else 0.0
+    transport = items_after_discount * 0.03 if included_charges.get('transport', True) else 0.0
+    contingency = items_after_discount * 0.03 if included_charges.get('contingency', True) else 0.0
+    subtotal = items_after_discount + supervision + admin + insurance + transport + contingency
+    itbis = subtotal * 0.18
+    grand_total = subtotal + itbis
+    
+    return {
+        'items_total': items_total,
+        'total_discounts': total_discounts,
+        'items_after_discount': items_after_discount,
+        'supervision': supervision,
+        'admin': admin,
+        'insurance': insurance,
+        'transport': transport,
+        'contingency': contingency,
+        'subtotal_general': subtotal,
+        'itbis': itbis,
+        'grand_total': grand_total,
+    }
+
+# ----------------------------
+# PDF GENERATOR
+# ----------------------------
+
+class QuotePDF(FPDF):
+    """Modern Quote PDF Generator"""
+    
+    def header(self):
+        # Add a colored header bar
+        self.set_fill_color(41, 128, 185)  # Modern blue
+        self.rect(0, 0, 210, 40, 'F')
+        
+        # Add logo if it exists
+        if os.path.exists("logo.png"):
+            self.image("logo.png", 10, 8, 25)  # x, y, width
+            logo_offset = 40
+        else:
+            logo_offset = 10
+        
+        # Company address in white, font size 6
+        self.set_text_color(255, 255, 255)
+        self.set_font("Helvetica", "", 4)  # <-- fixed font size
+        self.set_xy(logo_offset, 12)
+        address_lines = [
+            "Parque Industrial",
+            "Disdo, Calle Central No. 1,",
+            "Hato Nuevo Palave",
+            "Santo Domingo Oeste",
+            "Tel: 829-439-8476",
+            "RNC: 131-71683-2"
+        ]
+        for line in address_lines:
+            self.cell(0,2, line, 0, 1, "R")  # reduced line height to 4
+        
+        # Quote label – moved down to avoid overlap
+        self.set_font("Helvetica", "B", 16)
+        self.set_xy(logo_offset, 28)  # adjusted Y position
+        self.cell(0, 8, "COTIZACION", 0, 1, "R")
+        
+        # Reset text color
+        self.set_text_color(0, 0, 0)
+        self.ln(10)
+
+    def footer(self):
+        self.set_y(-20)
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(128, 128, 128)
+        self.cell(0, 5, "Parque Industrial Disdo, Calle Central No. 1, Hato Nuevo Palave", 0, 1, "C")
+        self.cell(0, 5, "Santo Domingo Oeste | Tel: 829-439-8476 | RNC: 131-71683-2", 0, 1, "C")
+        self.cell(0, 5, f"Pagina {self.page_no()}", 0, 0, "C")
+
+    def quote_info(self, quote_data, client_data):
+        # Two-column layout for quote info
+        self.set_font("Helvetica", "B", 11)
+        
+        # Left column - Quote details
+        self.set_xy(10, 55)
+        self.set_fill_color(240, 240, 240)
+        self.cell(90, 8, "INFORMACION DE COTIZACION", 0, 1, "L", True)
+        
+        self.set_font("Helvetica", "", 9)
+        self.set_x(10)
+        self.cell(40, 6, "Cotizacion #:", 0, 0, "L")
+        self.set_font("Helvetica", "B", 9)
+        self.cell(50, 6, quote_data['quote_id'], 0, 1, "L")
+        
+        self.set_font("Helvetica", "", 9)
+        self.set_x(10)
+        self.cell(40, 6, "Fecha:", 0, 0, "L")
+        self.set_font("Helvetica", "B", 9)
+        self.cell(50, 6, quote_data['date'], 0, 1, "L")
+        
+        self.set_font("Helvetica", "", 9)
+        self.set_x(10)
+        self.cell(40, 6, "Proyecto:", 0, 0, "L")
+        self.set_font("Helvetica", "B", 9)
+        self.cell(50, 6, quote_data.get('project_name', 'N/A'), 0, 1, "L")
+        
+        # Right column - Client details
+        self.set_xy(110, 55)
+        self.set_font("Helvetica", "B", 11)
+        self.set_fill_color(240, 240, 240)
+        self.cell(90, 8, "CLIENTE", 0, 1, "L", True)
+        
+        self.set_font("Helvetica", "", 9)
+        self.set_x(110)
+        self.cell(40, 6, "Empresa:", 0, 0, "L")
+        self.set_font("Helvetica", "B", 9)
+        self.multi_cell(50, 6, client_data['company_name'], 0, "L")
+        
+        if client_data.get('contact_name'):
+            self.set_font("Helvetica", "", 9)
+            self.set_x(110)
+            self.cell(40, 6, "Contacto:", 0, 0, "L")
+            self.set_font("Helvetica", "B", 9)
+            self.cell(50, 6, client_data['contact_name'], 0, 1, "L")
+        
+        if client_data.get('tax_id'):
+            self.set_font("Helvetica", "", 9)
+            self.set_x(110)
+            self.cell(40, 6, "RNC/Cedula:", 0, 0, "L")
+            self.set_font("Helvetica", "B", 9)
+            self.cell(50, 6, client_data['tax_id'], 0, 1, "L")
+        
+        if client_data.get('email'):
+            self.set_font("Helvetica", "", 9)
+            self.set_x(110)
+            self.cell(40, 6, "Email:", 0, 0, "L")
+            self.set_font("Helvetica", "B", 9)
+            self.cell(50, 6, client_data['email'], 0, 1, "L")
+        
+        if client_data.get('phone'):
+            self.set_font("Helvetica", "", 9)
+            self.set_x(110)
+            self.cell(40, 6, "Telefono:", 0, 0, "L")
+            self.set_font("Helvetica", "B", 9)
+            self.cell(50, 6, client_data['phone'], 0, 1, "L")
+        
+        self.ln(10)
+
+    def items_table(self, items_list):
+        # Modern table header
+        self.set_fill_color(52, 152, 219)
+        self.set_text_color(255, 255, 255)
+        self.set_font("Helvetica", "B", 10)
+        
+        self.cell(90, 9, "DESCRIPCION", 1, 0, "L", True)
+        self.cell(30, 9, "CANTIDAD", 1, 0, "C", True)
+        self.cell(35, 9, "PRECIO UNIT.", 1, 0, "R", True)
+        self.cell(35, 9, "TOTAL", 1, 1, "R", True)
+        
+        # Reset text color
+        self.set_text_color(0, 0, 0)
+        self.set_font("Helvetica", "", 9)
+        
+        # Alternating row colors
+        fill = False
+        for item in items_list:
+            desc = self._clean_text(str(item["product_name"]))
+            x = self.get_x()
+            y = self.get_y()
+            
+            # Set alternating background
+            if fill:
+                self.set_fill_color(245, 245, 245)
+            else:
+                self.set_fill_color(255, 255, 255)
+            
+            # Description with word wrap
+            if len(desc) > 50:
+                self.multi_cell(90, 6, desc, 1, "L", fill)
+                lines = len(desc) // 50 + 1
+                self.set_xy(x + 90, y)
+            else:
+                self.cell(90, 6, desc, 1, 0, "L", fill)
+            
+            self.cell(30, 6, f"{item['quantity']:,.2f}", 1, 0, "C", fill)
+            self.cell(35, 6, f"${item['unit_price']:,.2f}", 1, 0, "R", fill)
+            total = item["quantity"] * item["unit_price"]
+            self.cell(35, 6, f"${total:,.2f}", 1, 1, "R", fill)
+            
+            fill = not fill
+        
+        self.ln(5)
+
+    def cost_summary(self, totals, included_charges):
+        # Summary box with border
+        start_y = self.get_y()
+        self.set_draw_color(52, 152, 219)
+        self.set_line_width(0.5)
+        
+        self.set_font("Helvetica", "B", 10)
+        self.set_fill_color(240, 248, 255)
+        self.cell(0, 8, "RESUMEN FINANCIERO", 1, 1, "L", True)
+        
+        self.set_font("Helvetica", "", 9)
+        self.set_line_width(0.2)
+        
+        # Items total
+        self.cell(130, 6, "Subtotal de Items:", 1, 0, "L")
+        self.cell(60, 6, f"${totals['items_total']:,.2f}", 1, 1, "R")
+        
+        # Show discounts if any
+        if totals.get('total_discounts', 0) > 0:
+            self.set_text_color(220, 53, 69)  # Red for discounts
+            self.cell(130, 6, "Descuentos Aplicados:", 1, 0, "L")
+            self.cell(60, 6, f"-${totals['total_discounts']:,.2f}", 1, 1, "R")
+            self.set_text_color(0, 0, 0)
+            
+            self.set_font("Helvetica", "B", 9)
+            self.cell(130, 6, "Total Despues de Descuentos:", 1, 0, "L")
+            self.cell(60, 6, f"${totals['items_after_discount']:,.2f}", 1, 1, "R")
+            self.set_font("Helvetica", "", 9)
+        
+        # Additional charges
+        if included_charges.get('supervision'):
+            self.cell(130, 6, "Supervision Tecnica (10%):", 1, 0, "L")
+            self.cell(60, 6, f"${totals['supervision']:,.2f}", 1, 1, "R")
+        if included_charges.get('admin'):
+            self.cell(130, 6, "Gastos Administrativos (4%):", 1, 0, "L")
+            self.cell(60, 6, f"${totals['admin']:,.2f}", 1, 1, "R")
+        if included_charges.get('insurance'):
+            self.cell(130, 6, "Seguro de Riesgo (1%):", 1, 0, "L")
+            self.cell(60, 6, f"${totals['insurance']:,.2f}", 1, 1, "R")
+        if included_charges.get('transport'):
+            self.cell(130, 6, "Transporte (3%):", 1, 0, "L")
+            self.cell(60, 6, f"${totals['transport']:,.2f}", 1, 1, "R")
+        if included_charges.get('contingency'):
+            self.cell(130, 6, "Imprevisto (3%):", 1, 0, "L")
+            self.cell(60, 6, f"${totals['contingency']:,.2f}", 1, 1, "R")
+        
+        # Subtotal
+        self.set_font("Helvetica", "B", 10)
+        self.set_fill_color(230, 240, 250)
+        self.cell(130, 7, "SUBTOTAL GENERAL:", 1, 0, "L", True)
+        self.cell(60, 7, f"${totals['subtotal_general']:,.2f}", 1, 1, "R", True)
+        
+        # Tax
+        self.set_font("Helvetica", "", 9)
+        self.cell(130, 6, "ITBIS (18%):", 1, 0, "L")
+        self.cell(60, 6, f"${totals['itbis']:,.2f}", 1, 1, "R")
+        
+        # Grand total with highlight
+        self.set_font("Helvetica", "B", 12)
+        self.set_fill_color(52, 152, 219)
+        self.set_text_color(255, 255, 255)
+        self.cell(130, 10, "TOTAL GENERAL:", 1, 0, "L", True)
+        self.cell(60, 10, f"${totals['grand_total']:,.2f}", 1, 1, "R", True)
+        
+        # Reset colors
+        self.set_text_color(0, 0, 0)
+        self.set_line_width(0.2)
+
+    def notes_section(self, notes):
+        """Add notes section to quote"""
+        if notes and notes.strip():
+            self.ln(8)
+            self.set_font("Helvetica", "B", 10)
+            self.set_fill_color(240, 248, 255)
+            self.cell(0, 7, "NOTAS Y CONDICIONES", 0, 1, "L", True)
+            self.set_font("Helvetica", "", 9)
+            self.set_text_color(60, 60, 60)
+            self.multi_cell(0, 5, self._clean_text(notes), 0, "L")
+            self.set_text_color(0, 0, 0)
+
+    def _clean_text(self, text):
+        replacements = {
+            "\u2022": "-", "\u2013": "-", "\u2014": "--",
+            "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u00a0": " "
+        }
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        return text.encode('latin1', errors='replace').decode('latin1')
+
+
+class InvoicePDF(FPDF):
+    """Modern Invoice PDF Generator"""
+    
+    def header(self):
+        # Add a colored header bar - different color for invoices
+        self.set_fill_color(231, 76, 60)  # Red/Orange for invoice
+        self.rect(0, 0, 210, 40, 'F')
+        
+        # Add logo if it exists
+        if os.path.exists("logo.png"):
+            self.image("logo.png", 10, 8, 25)  # x, y, width
+            logo_offset = 40
+        else:
+            logo_offset = 10
+        
+        # Company address in white, font size 6
+        self.set_text_color(255, 255, 255)
+        self.set_font("Helvetica", "", 4)  # <-- fixed font size
+        self.set_xy(logo_offset, 12)
+        address_lines = [
+            "Parque Industrial",
+            "Disdo, Calle Central No. 1,",
+            "Hato Nuevo Palave",
+            "Santo Domingo Oeste",
+            "Tel: 829-439-8476",
+            "RNC: 131-71683-2"
+        ]
+        for line in address_lines:
+            self.cell(0,2, line, 0, 1, "R")  # reduced line height to 4
+        
+        # Invoice label – moved down to avoid overlap
+        self.set_font("Helvetica", "B", 16)
+        self.set_xy(logo_offset, 28)  # adjusted Y position
+        self.cell(0, 8, "FACTURA", 0, 1, "R")
+        
+        # Reset text color
+        self.set_text_color(0, 0, 0)
+        self.ln(10)
+
+    def footer(self):
+        self.set_y(-20)
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(128, 128, 128)
+        self.cell(0, 5, "Parque Industrial Disdo, Calle Central No. 1, Hato Nuevo Palave", 0, 1, "C")
+        self.cell(0, 5, "Santo Domingo Oeste | Tel: 829-439-8476 | RNC: 131-71683-2", 0, 1, "C")
+        self.cell(0, 5, f"Pagina {self.page_no()}", 0, 0, "C")
+
+    def invoice_info(self, quote_data, client_data):
+        # Two-column layout for invoice info
+        self.set_font("Helvetica", "B", 11)
+        
+        # Left column - Invoice details
+        self.set_xy(10, 55)
+        self.set_fill_color(255, 240, 240)
+        self.cell(90, 8, "INFORMACION DE FACTURA", 0, 1, "L", True)
+        
+        self.set_font("Helvetica", "", 9)
+        self.set_x(10)
+        self.cell(40, 6, "Factura #:", 0, 0, "L")
+        self.set_font("Helvetica", "B", 9)
+        self.cell(50, 6, quote_data['quote_id'], 0, 1, "L")
+        
+        self.set_font("Helvetica", "", 9)
+        self.set_x(10)
+        self.cell(40, 6, "Fecha Emision:", 0, 0, "L")
+        self.set_font("Helvetica", "B", 9)
+        self.cell(50, 6, quote_data['date'], 0, 1, "L")
+        
+        self.set_font("Helvetica", "", 9)
+        self.set_x(10)
+        self.cell(40, 6, "Proyecto:", 0, 0, "L")
+        self.set_font("Helvetica", "B", 9)
+        self.cell(50, 6, quote_data.get('project_name', 'N/A'), 0, 1, "L")
+        
+        # Payment terms
+        self.set_font("Helvetica", "", 9)
+        self.set_x(10)
+        self.cell(40, 6, "Terminos:", 0, 0, "L")
+        self.set_font("Helvetica", "B", 9)
+        self.cell(50, 6, "Net 30", 0, 1, "L")
+        
+        # Right column - Client details
+        self.set_xy(110, 55)
+        self.set_font("Helvetica", "B", 11)
+        self.set_fill_color(255, 240, 240)
+        self.cell(90, 8, "FACTURAR A", 0, 1, "L", True)
+        
+        self.set_font("Helvetica", "", 9)
+        self.set_x(110)
+        self.cell(40, 6, "Empresa:", 0, 0, "L")
+        self.set_font("Helvetica", "B", 9)
+        self.multi_cell(50, 6, client_data['company_name'], 0, "L")
+        
+        if client_data.get('contact_name'):
+            self.set_font("Helvetica", "", 9)
+            self.set_x(110)
+            self.cell(40, 6, "Contacto:", 0, 0, "L")
+            self.set_font("Helvetica", "B", 9)
+            self.cell(50, 6, client_data['contact_name'], 0, 1, "L")
+        
+        if client_data.get('tax_id'):
+            self.set_font("Helvetica", "", 9)
+            self.set_x(110)
+            self.cell(40, 6, "RNC/Cedula:", 0, 0, "L")
+            self.set_font("Helvetica", "B", 9)
+            self.cell(50, 6, client_data['tax_id'], 0, 1, "L")
+        
+        if client_data.get('email'):
+            self.set_font("Helvetica", "", 9)
+            self.set_x(110)
+            self.cell(40, 6, "Email:", 0, 0, "L")
+            self.set_font("Helvetica", "B", 9)
+            self.cell(50, 6, client_data['email'], 0, 1, "L")
+        
+        if client_data.get('phone'):
+            self.set_font("Helvetica", "", 9)
+            self.set_x(110)
+            self.cell(40, 6, "Telefono:", 0, 0, "L")
+            self.set_font("Helvetica", "B", 9)
+            self.cell(50, 6, client_data['phone'], 0, 1, "L")
+        
+        self.ln(10)
+
+    def items_table(self, items_list):
+        # Modern table header - different color for invoices
+        self.set_fill_color(231, 76, 60)
+        self.set_text_color(255, 255, 255)
+        self.set_font("Helvetica", "B", 10)
+        
+        self.cell(90, 9, "DESCRIPCION", 1, 0, "L", True)
+        self.cell(30, 9, "CANTIDAD", 1, 0, "C", True)
+        self.cell(35, 9, "PRECIO UNIT.", 1, 0, "R", True)
+        self.cell(35, 9, "TOTAL", 1, 1, "R", True)
+        
+        # Reset text color
+        self.set_text_color(0, 0, 0)
+        self.set_font("Helvetica", "", 9)
+        
+        # Alternating row colors
+        fill = False
+        for item in items_list:
+            desc = self._clean_text(str(item["product_name"]))
+            x = self.get_x()
+            y = self.get_y()
+            
+            # Set alternating background
+            if fill:
+                self.set_fill_color(245, 245, 245)
+            else:
+                self.set_fill_color(255, 255, 255)
+            
+            # Description with word wrap
+            if len(desc) > 50:
+                self.multi_cell(90, 6, desc, 1, "L", fill)
+                lines = len(desc) // 50 + 1
+                self.set_xy(x + 90, y)
+            else:
+                self.cell(90, 6, desc, 1, 0, "L", fill)
+            
+            self.cell(30, 6, f"{item['quantity']:,.2f}", 1, 0, "C", fill)
+            self.cell(35, 6, f"${item['unit_price']:,.2f}", 1, 0, "R", fill)
+            total = item["quantity"] * item["unit_price"]
+            self.cell(35, 6, f"${total:,.2f}", 1, 1, "R", fill)
+            
+            fill = not fill
+        
+        self.ln(5)
+
+    def cost_summary(self, totals, included_charges):
+        # Summary box with border
+        start_y = self.get_y()
+        self.set_draw_color(231, 76, 60)
+        self.set_line_width(0.5)
+        
+        self.set_font("Helvetica", "B", 10)
+        self.set_fill_color(255, 245, 245)
+        self.cell(0, 8, "RESUMEN DE PAGO", 1, 1, "L", True)
+        
+        self.set_font("Helvetica", "", 9)
+        self.set_line_width(0.2)
+        
+        # Items total
+        self.cell(130, 6, "Subtotal de Items:", 1, 0, "L")
+        self.cell(60, 6, f"${totals['items_total']:,.2f}", 1, 1, "R")
+        
+        # Show discounts if any
+        if totals.get('total_discounts', 0) > 0:
+            self.set_text_color(220, 53, 69)  # Red for discounts
+            self.cell(130, 6, "Descuentos Aplicados:", 1, 0, "L")
+            self.cell(60, 6, f"-${totals['total_discounts']:,.2f}", 1, 1, "R")
+            self.set_text_color(0, 0, 0)
+            
+            self.set_font("Helvetica", "B", 9)
+            self.cell(130, 6, "Total Despues de Descuentos:", 1, 0, "L")
+            self.cell(60, 6, f"${totals['items_after_discount']:,.2f}", 1, 1, "R")
+            self.set_font("Helvetica", "", 9)
+        
+        # Additional charges
+        if included_charges.get('supervision'):
+            self.cell(130, 6, "Supervision Tecnica (10%):", 1, 0, "L")
+            self.cell(60, 6, f"${totals['supervision']:,.2f}", 1, 1, "R")
+        if included_charges.get('admin'):
+            self.cell(130, 6, "Gastos Administrativos (4%):", 1, 0, "L")
+            self.cell(60, 6, f"${totals['admin']:,.2f}", 1, 1, "R")
+        if included_charges.get('insurance'):
+            self.cell(130, 6, "Seguro de Riesgo (1%):", 1, 0, "L")
+            self.cell(60, 6, f"${totals['insurance']:,.2f}", 1, 1, "R")
+        if included_charges.get('transport'):
+            self.cell(130, 6, "Transporte (3%):", 1, 0, "L")
+            self.cell(60, 6, f"${totals['transport']:,.2f}", 1, 1, "R")
+        if included_charges.get('contingency'):
+            self.cell(130, 6, "Imprevisto (3%):", 1, 0, "L")
+            self.cell(60, 6, f"${totals['contingency']:,.2f}", 1, 1, "R")
+        
+        # Subtotal
+        self.set_font("Helvetica", "B", 10)
+        self.set_fill_color(255, 235, 235)
+        self.cell(130, 7, "SUBTOTAL GENERAL:", 1, 0, "L", True)
+        self.cell(60, 7, f"${totals['subtotal_general']:,.2f}", 1, 1, "R", True)
+        
+        # Tax
+        self.set_font("Helvetica", "", 9)
+        self.cell(130, 6, "ITBIS (18%):", 1, 0, "L")
+        self.cell(60, 6, f"${totals['itbis']:,.2f}", 1, 1, "R")
+        
+        # Grand total with highlight
+        self.set_font("Helvetica", "B", 12)
+        self.set_fill_color(231, 76, 60)
+        self.set_text_color(255, 255, 255)
+        self.cell(130, 10, "TOTAL A PAGAR:", 1, 0, "L", True)
+        self.cell(60, 10, f"${totals['grand_total']:,.2f}", 1, 1, "R", True)
+        
+        # Reset colors
+        self.set_text_color(0, 0, 0)
+        self.set_line_width(0.2)
+        
+        # Payment instructions
+        self.ln(5)
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(100, 100, 100)
+        self.multi_cell(0, 4, "Favor realizar pago mediante transferencia bancaria o cheque a nombre de RIGC INDUSTRIAL.\nPara consultas sobre esta factura, contactar al 829-439-8476.", 0, "L")
+
+    def notes_section(self, notes):
+        """Add notes section to invoice"""
+        if notes and notes.strip():
+            self.ln(5)
+            self.set_font("Helvetica", "B", 10)
+            self.set_fill_color(255, 245, 245)
+            self.cell(0, 7, "NOTAS ADICIONALES", 0, 1, "L", True)
+            self.set_font("Helvetica", "", 9)
+            self.set_text_color(60, 60, 60)
+            self.multi_cell(0, 5, self._clean_text(notes), 0, "L")
+            self.set_text_color(0, 0, 0)
+
+    def _clean_text(self, text):
+        replacements = {
+            "\u2022": "-", "\u2013": "-", "\u2014": "--",
+            "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u00a0": " "
+        }
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        return text.encode('latin1', errors='replace').decode('latin1')
+
+# ----------------------------
+# AUTHENTICATION
+# ----------------------------
+
 MAX_ATTEMPTS = 3
-USER_PASSCODES = {
-    "fabian": "rams20",
-    "admin": "admin123"
-}
+USER_PASSCODES = {"fabian": "rams20", "admin": "admin123"}
 
-# --- SESSION STATE INIT ---
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-if "attempts" not in st.session_state:
-    st.session_state.attempts = 0
-if "username" not in st.session_state:
-    st.session_state.username = ""
-if 'last_steel_calc' not in st.session_state:
-    st.session_state.last_steel_calc = {}
-if 'last_materials_calc' not in st.session_state:
-    st.session_state.last_materials_calc = {}
-if 'quote_products' not in st.session_state:
-    st.session_state.quote_products = []
-
-# LABOR RATES (not used directly, but kept for future)
-LABOR_RATES = {
-    "steel_installation_rate": 350.0,
-    "roofing_rate": 8.5,
-    "wall_cladding_rate": 12.0,
-    "accessories_rate": 450.0,
-    "supervision_days_factor": 0.05,
-    "daily_supervisor_rate": 150.0,
-}
-
-def create_building_sketch(dimensions):
-    length = dimensions.get('length', 20.0)
-    width = dimensions.get('width', 15.0)
-    wall_height = dimensions.get('wall_height', 4.0)
-    roof_rise = dimensions.get('roof_height', 2.0)  # This is the *rise*, not total height
-    total_height = wall_height + roof_rise
-    area = length * width
-    fig, (ax_top, ax_front, ax_side) = plt.subplots(1, 3, figsize=(12, 4))
-    fig.patch.set_facecolor('white')
-
-    # TOP VIEW
-    ax_top.set_xlim(0, length)
-    ax_top.set_ylim(0, width)
-    top_rect = patches.Rectangle((0, 0), length, width,
-                                linewidth=2, edgecolor='black',
-                                facecolor='lightgray', alpha=0.4)
-    ax_top.add_patch(top_rect)
-    ax_top.annotate('', xy=(0, -0.8), xytext=(length, -0.8),
-                    arrowprops=dict(arrowstyle='<->', lw=1.2))
-    ax_top.text(length/2, -1.2, f'{length} m', ha='center', va='top', fontsize=9)
-    ax_top.annotate('', xy=(-0.8, 0), xytext=(-0.8, width),
-                    arrowprops=dict(arrowstyle='<->', lw=1.2))
-    ax_top.text(-1.2, width/2, f'{width} m', ha='right', va='center', rotation=90, fontsize=9)
-    ax_top.set_title('PLANTA', fontsize=10, fontweight='bold')
-    ax_top.set_aspect('equal')
-    ax_top.axis('off')
-
-    # FRONT VIEW
-    ax_front.set_xlim(-1, width + 1)
-    ax_front.set_ylim(0, total_height + 1)
-    front_wall = patches.Rectangle((0, 0), width, wall_height,
-                                   linewidth=2, edgecolor='black',
-                                   facecolor='lightgray', alpha=0.4)
-    ax_front.add_patch(front_wall)
-    roof_points = [(0, wall_height), (width/2, total_height), (width, wall_height)]
-    front_roof = patches.Polygon(roof_points, linewidth=2, edgecolor='black',
-                                 facecolor='darkgray', alpha=0.5)
-    ax_front.add_patch(front_roof)
-    ax_front.annotate('', xy=(0, -0.5), xytext=(width, -0.5),
-                      arrowprops=dict(arrowstyle='<->', lw=1.2))
-    ax_front.text(width/2, -0.8, f'{width} m', ha='center', va='top', fontsize=9)
-    ax_front.annotate('', xy=(-0.5, 0), xytext=(-0.5, wall_height),
-                      arrowprops=dict(arrowstyle='<->', lw=1.2))
-    ax_front.text(-0.8, wall_height/2, f'{wall_height} m', ha='right', va='center', rotation=90, fontsize=9)
-    ax_front.annotate('', xy=(width + 0.5, 0), xytext=(width + 0.5, total_height),
-                      arrowprops=dict(arrowstyle='<->', lw=1.2))
-    ax_front.text(width + 0.8, total_height/2, f'{total_height} m', ha='left', va='center', rotation=90, fontsize=9)
-    ax_front.set_title('VISTA FRONTAL', fontsize=10, fontweight='bold')
-    ax_front.set_aspect('equal')
-    ax_front.axis('off')
-
-    # SIDE VIEW
-    ax_side.set_xlim(-1, length + 1)
-    ax_side.set_ylim(0, total_height + 1)
-    side_wall = patches.Rectangle((0, 0), length, wall_height,
-                                  linewidth=2, edgecolor='black',
-                                  facecolor='lightgray', alpha=0.4)
-    ax_side.add_patch(side_wall)
-    roof_side = patches.Rectangle((0, wall_height), length, roof_rise,
-                                  linewidth=2, edgecolor='black',
-                                  facecolor='darkgray', alpha=0.5)
-    ax_side.add_patch(roof_side)
-    ax_side.annotate('', xy=(0, -0.5), xytext=(length, -0.5),
-                     arrowprops=dict(arrowstyle='<->', lw=1.2))
-    ax_side.text(length/2, -0.8, f'{length} m', ha='center', va='top', fontsize=9)
-    ax_side.annotate('', xy=(-0.5, 0), xytext=(-0.5, wall_height),
-                     arrowprops=dict(arrowstyle='<->', lw=1.2))
-    ax_side.text(-0.8, wall_height/2, f'{wall_height} m', ha='right', va='center', rotation=90, fontsize=9)
-    ax_side.set_title('VISTA LATERAL', fontsize=10, fontweight='bold')
-    ax_side.set_aspect('equal')
-    ax_side.axis('off')
-
-    fig.text(0.5, 0.02, f'ÁREA TOTAL: {area:,.2f} m²', 
-             ha='center', fontsize=10, fontweight='bold')
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
-    buf = BytesIO()
-    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
-    plt.close(fig)
-    buf.seek(0)
-    return buf
-
-    # Create 3D Sketch
-
-def create_3d_building_sketch(dimensions):
-
-    length = dimensions.get('length', 20.0)
-    width = dimensions.get('width', 15.0)
-    wall_height = dimensions.get('wall_height', 4.0)
-    roof_rise = max(0.1, dimensions.get('roof_height', 2.0))  # vertical rise only
-    total_height = wall_height + roof_rise
-
-    # Create figure sized for PDF (6.5" x 9" safe area)
-    fig = plt.figure(figsize=(6.5, 9))
-    ax = fig.add_subplot(111, projection='3d')
-
-    # Set equal aspect
-    max_dim = max(length, width, total_height)
-    ax.set_xlim(0, length)
-    ax.set_ylim(0, width)
-    ax.set_zlim(0, total_height)
-
-    # === Define vertices ===
-    # Floor corners
-    floor = [
-        [0, 0, 0],
-        [length, 0, 0],
-        [length, width, 0],
-        [0, width, 0]
-    ]
-
-    # Wall top corners
-    wall_top = [
-        [0, 0, wall_height],
-        [length, 0, wall_height],
-        [length, width, wall_height],
-        [0, width, wall_height]
-    ]
-
-    # Roof peak (center line along length)
-    roof_peak_front = [length / 2, 0, total_height]
-    roof_peak_back = [length / 2, width, total_height]
-
-    # === Faces ===
-    faces = []
-
-    # Floor
-    faces.append(floor)
-
-    # Walls
-    faces.append([floor[0], floor[1], wall_top[1], wall_top[0]])  # front
-    faces.append([floor[1], floor[2], wall_top[2], wall_top[1]])  # right
-    faces.append([floor[2], floor[3], wall_top[3], wall_top[2]])  # back
-    faces.append([floor[3], floor[0], wall_top[0], wall_top[3]])  # left
-
-    # Roof (two slopes)
-    # Front slope
-    faces.append([wall_top[0], wall_top[1], roof_peak_front])
-    # Back slope
-    faces.append([wall_top[2], wall_top[3], roof_peak_back])
-    # Left gable
-    faces.append([wall_top[0], wall_top[3], roof_peak_back, roof_peak_front])
-    # Right gable
-    faces.append([wall_top[1], wall_top[2], roof_peak_back, roof_peak_front])
-
-    # Create collection
-    poly3d = Poly3DCollection(faces, facecolors='lightgray', edgecolors='black', linewidths=0.8, alpha=0.9)
-    ax.add_collection3d(poly3d)
-
-    # Remove axes and ticks
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_zticks([])
-    ax.set_axis_off()
-
-    # Adjust view angle for warehouse look
-    ax.view_init(elev=20, azim=-60)
-
-    plt.tight_layout(pad=0)
-
-    # Save to buffer
-    buf = BytesIO()
-    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
-    plt.close(fig)
-    buf.seek(0)
-    return buf
-
-def parse_fraction(s):
-    if '/' in s:
-        num, den = map(int, s.split('/'))
-        return num / den
-    return float(s)
-
-def sort_key(profile):
-    match = re.match(r'([A-Z]+)', profile)
-    if not match:
-        return (99, 0, 0, 0)
-    prefix = match.group(1)
-    types_order = {'W': 0, 'S': 1, 'C': 2, 'MC': 3, 'L': 4, 'HSS': 5}
-    type_idx = types_order.get(prefix, 99)
-    if prefix in ['W', 'S', 'C', 'MC']:
-        parts = profile[len(prefix):].split('x')
-        depth = float(parts[0]) if parts[0] else 0
-        weight = parse_fraction(parts[1]) if len(parts) > 1 else 0
-        return (type_idx, depth, weight)
-    elif prefix == 'L':
-        parts = profile[len(prefix):].split('x')
-        if len(parts) == 3:
-            s1 = float(parts[0])
-            s2 = float(parts[1])
-            thick = parse_fraction(parts[2])
-            return (type_idx, max(s1, s2), min(s1, s2), thick)
-        return (type_idx, 0, 0, 0)
-    elif prefix == 'HSS':
-        parts = profile[len(prefix):].split('x')
-        if len(parts) == 3:
-            h = float(parts[0])
-            w = float(parts[1])
-            thick = parse_fraction(parts[2])
-            return (type_idx, max(h, w), min(h, w), thick)
-        return (type_idx, 0, 0, 0)
-    return (type_idx, 0, 0, 0)
-
-def better_sort(profiles):
-    return sorted(profiles, key=sort_key)
-
-all_profiles = better_sort(list(profile_weights.keys()))
-
-# --- AUTHENTICATION FUNCTIONS ---
 def show_login_page():
-    st.set_page_config(layout="centered")
-    login_css = """
+    st.markdown("""
     <style>
         html, body, [data-testid="stAppViewContainer"] {
-            height: 100vh;
-            overflow: hidden;
-            background: radial-gradient(circle at top, #0f0f19 0%, #050510 100%);
+            height: 100vh; background: radial-gradient(circle at top, #0f0f19 0%, #050510 100%);
         }
-        .login-frame {
-            max-width: 500px;
-            margin: auto;
-            padding: 2rem;
-            background: rgba(20, 20, 30, 0.95);
-            border-radius: 20px;
-            box-shadow: 0 0 40px rgba(0, 255, 255, 0.2);
-            border: 1px solid rgba(0, 255, 255, 0.2);
-            backdrop-filter: blur(20px);
-        }
-        .login-title {
-            font-size: 40px;
-            font-weight: 800;
-            text-align: center;
+        .login-title { font-size: 40px; font-weight: 800; text-align: center;
             background: linear-gradient(135deg, #00ffff, #0099ff, #ff00ff);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 0.5rem;
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.5rem;
         }
-        .login-subtitle {
-            text-align: center;
-            color: rgba(255,255,255,0.6);
-            font-size: 14px;
-            letter-spacing: 1.5px;
-            margin-bottom: 2rem;
-        }
-        .logo {
-            display: block;
-            margin: 2rem auto 1rem auto;
-            max-width: 300px;
-        }
+        .login-subtitle { text-align: center; color: rgba(255,255,255,0.6); font-size: 14px; letter-spacing: 1.5px; margin-bottom: 2rem; }
     </style>
-    """
-    st.markdown(login_css, unsafe_allow_html=True)
-    logo = next((p for p in ["logo.png", "assets/logo.png", "logo.jpg", "assets/logo.jpg"] 
-                 if os.path.exists(p)), None)
-    if logo:
-        st.image(logo, use_container_width=True)
-    else:
-        st.markdown('<div style="text-align:center; font-size:72px; margin:2rem 0;">🏗️</div>', unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div style="text-align:center; font-size:72px; margin:2rem 0;">🏗️</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-title">RIGC 2030</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-subtitle">SISTEMA DE CÁLCULO INDUSTRIAL</div>', unsafe_allow_html=True)
+
     if st.session_state.attempts >= MAX_ATTEMPTS:
         st.error("⚠️ Máximo de intentos alcanzado. Contacte al administrador.")
         return
-    with st.form("login_form", clear_on_submit=True):
-        username = st.text_input("👤 Usuario", placeholder="Ingrese su usuario")
-        password = st.text_input("🔒 Contraseña", type="password", placeholder="Ingrese su contraseña")
-        submit = st.form_submit_button("ACCEDER", use_container_width=True, type="primary")
-    if submit:
-        if username in USER_PASSCODES and password == USER_PASSCODES[username]:
-            st.session_state.authenticated = True
-            st.session_state.username = username
-            st.success("✅ Acceso exitoso")
-            st.rerun()
-        else:
-            st.session_state.attempts += 1
-            remaining = MAX_ATTEMPTS - st.session_state.attempts
-            st.error(f"❌ Credenciales incorrectas. {'Intentos: ' + str(remaining) if remaining > 0 else 'Último intento'}")
-            if remaining == 0:
+
+    with st.form("login_form"):
+        username = st.text_input("👤 Usuario")
+        password = st.text_input("🔒 Contraseña", type="password")
+        submit = st.form_submit_button("ACCEDER", use_container_width=True)
+        if submit:
+            if username in USER_PASSCODES and password == USER_PASSCODES[username]:
+                st.session_state.authenticated = True
+                st.session_state.username = username
+                st.success("✅ Acceso exitoso")
                 st.rerun()
+            else:
+                st.session_state.attempts += 1
+                remaining = MAX_ATTEMPTS - st.session_state.attempts
+                st.error(f"❌ Credenciales incorrectas. Intentos restantes: {remaining}")
+                if remaining <= 0:
+                    st.rerun()
 
-# --- CALCULATION FUNCTIONS ---
-def calculate_materials(largo, ancho, alto_lateral, alto_techado, distancia):
-    perimetro = 2 * (largo + ancho)
-    aluzinc_techo = largo * ancho * 1.1 * 3.28
-    aluzinc_pared = perimetro * alto_lateral * 3.28
-    correa_techo = (ancho + 2) * largo * 3.28
-    correa_pared = ((ancho * 2) + (largo * 2)) * (alto_lateral + 1) * 3.28
-    tornillos_techo = (aluzinc_techo + aluzinc_pared) * 5
-    cubrefaltas = ((ancho * 2) + (alto_lateral * 4)) * 1.1 * 3.28
-    canaletas = largo * 2 * 1.1 * 3.28
-    bajantes = ((largo / distancia) + 1) * 2
-    caballetes = largo * 1.1 * 3.28
+# ----------------------------
+# MAIN APP
+# ----------------------------
 
-    return {
-        'aluzinc_techo': aluzinc_techo,
-        'aluzinc_pared': aluzinc_pared,
-        'correa_techo': correa_techo,
-        'correa_pared': correa_pared,
-        'tornillos_techo': tornillos_techo,
-        'cubrefaltas': cubrefaltas,
-        'canaletas': canaletas,
-        'bajantes': bajantes,
-        'caballetes': caballetes,
-        'largo': largo,
-        'ancho': ancho,
-        'alto_lateral': alto_lateral,
-        'alto_techado': alto_techado,
-        'distancia': distancia
-    }
-
-# --- QUOTATION GENERATOR CLASS ---
-class QuotationGenerator:
-    @staticmethod
-    def calculate_quote(products):
-        items_total = sum(
-            float(p.get('quantity', 0)) * float(p.get('unit_price', 0))
-            for p in products
-        )
-        supervision = items_total * 0.10
-        admin = items_total * 0.04
-        insurance = items_total * 0.01
-        transport = items_total * 0.03
-        contingency = items_total * 0.03
-        subtotal_general = items_total + supervision + admin + insurance + transport + contingency
-        itbis = subtotal_general * 0.18
-        grand_total = subtotal_general + itbis
-        return {
-            'items_total': items_total,
-            'supervision': supervision,
-            'admin': admin,
-            'insurance': insurance,
-            'transport': transport,
-            'contingency': contingency,
-            'subtotal_general': subtotal_general,
-            'itbis': itbis,
-            'grand_total': grand_total,
-        }
-
-    @staticmethod
-    def generate_pdf(quote_data, company_info, products, totals, show_products=True, create_building_sketch=None, create_building_sketch_3d=None):
-        buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=40, bottomMargin=40, leftMargin=36, rightMargin=36)
-        story = []
-        styles = getSampleStyleSheet()
-        base_font = 'Helvetica'
-        bold_font = 'Helvetica-Bold'
-        logo_added = False
-        for logo_path in ["assets/logo.png", "logo.png", "assets/logo.jpg", "logo.jpg"]:
-            if os.path.exists(logo_path):
-                try:
-                    logo = Image(logo_path, width=1 * inch, height=0.4 * inch)
-                    logo.hAlign = 'LEFT'
-                    story.append(logo)
-                    story.append(Spacer(1, 6))
-                    logo_added = True
-                    break
-                except:
-                    pass
-        if not logo_added:
-            fallback_style = ParagraphStyle(
-                'FallbackHeader',
-                fontName=bold_font,
-                fontSize=12,
-                textColor=colors.HexColor('#004898'),
-                spaceAfter=6,
-                alignment=0
-            )
-            story.append(Paragraph("EMPRESA CONSTRUCTORA", fallback_style))
-            story.append(Spacer(1, 4))
-        company_info_style = ParagraphStyle(
-            'CompanyInfo',
-            fontName=base_font,
-            fontSize=7,
-            leading=9,
-            textColor=colors.HexColor('#555555'),
-            spaceAfter=8
-        )
-        company_info_text = (
-            "PARQUE INDUSTRIAL DISDO - CALLE CENTRAL No. 1<br/>"
-            "HATO NUEVO PALAVE - SECTOR MANOGUAYABO<br/>"
-            "SANTO DOMINGO OESTE • TEL: 829-439-8476<br/>"
-            "RNC: 131-71683-2"
-        )
-        story.append(Paragraph(company_info_text, company_info_style))
-        story.append(Spacer(1, 4))
-        divider = Table([['']], colWidths=[6.5 * inch])
-        divider.setStyle(TableStyle([
-            ('LINEBELOW', (0, 0), (-1, -1), 0.8, colors.HexColor('#004898')),
-        ]))
-        story.append(divider)
-        story.append(Spacer(1, 12))
-        title_style = ParagraphStyle(
-            'QuoteTitle',
-            fontName=bold_font,
-            fontSize=14,
-            textColor=colors.HexColor('#004898'),
-            alignment=TA_RIGHT,
-            spaceAfter=12
-        )
-        story.append(Paragraph("ESTIMADO PRELIMINAR", title_style))
-        info_data = [
-            ['INFORMACIÓN DEL PROYECTO', ''],
-            ['Cliente:', company_info['client']],
-            ['Proyecto:', company_info['project']],
-            ['Fecha:', datetime.now().strftime('%d/%m/%Y')],
-            ['Validez:', f"{company_info['validity']} días"],
-            ['Cotizado por:', company_info['quoted_by']]
-        ]
-        info_table = Table(info_data, colWidths=[180, 370])
-        info_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f5f7fa')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#004898')),
-            ('FONTNAME', (0, 0), (-1, 0), bold_font),
-            ('FONTSIZE', (0, 0), (-1, 0), 9),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTSIZE', (0, 1), (-1, -1), 8),
-            ('FONTNAME', (0, 1), (-1, -1), base_font),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#dddddd')),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-        ]))
-        story.append(info_table)
-        story.append(Spacer(1, 16))
-        if create_building_sketch:
-            try:
-                sketch_img = Image(create_building_sketch, width=4 * inch, height=3 * inch)
-                sketch_img.hAlign = 'CENTER'
-                story.append(sketch_img)
-                story.append(Spacer(1, 12))
-            except Exception as e:
-                print(f"Sketch image failed: {e}")
-        if show_products and products:
-            products_data = [['DESCRIPCIÓN', 'CANTIDAD', 'PRECIO UNIT.', 'SUBTOTAL']]
-            for p in products:
-                products_data.append([
-                    p.get('product_name', ''),
-                    f"{p.get('quantity', 0):,.2f}",
-                    f"${p.get('unit_price', 0):,.2f}",
-                    f"${p.get('subtotal', 0):,.2f}"
-                ])
-            products_table = Table(products_data, colWidths=[250, 70, 90, 90])
-            products_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f0f4f8')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#004898')),
-                ('FONTNAME', (0, 0), (-1, 0), bold_font),
-                ('FONTSIZE', (0, 0), (-1, -1), 8),
-                ('FONTNAME', (0, 1), (-1, -1), base_font),
-                ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),
-                ('ALIGN', (0, 1), (0, -1), 'LEFT'),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#fafafa')]),
-                ('TOPPADDING', (0, 0), (-1, -1), 4),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ]))
-            story.append(products_table)
-            story.append(Spacer(1, 16))
-        totals_data = [
-            ['RESUMEN DE COSTOS', ''],
-            ['Total Items:', f"${totals['items_total']:,.2f}"],
-            ['Supervisión Técnica (10%):', f"${totals['supervision']:,.2f}"],
-            ['Gastos Administrativos (4%):', f"${totals['admin']:,.2f}"],
-            ['Seguro de Riesgo (1%):', f"${totals['insurance']:,.2f}"],
-            ['Transporte (3%):', f"${totals['transport']:,.2f}"],
-            ['Imprevisto (3%):', f"${totals['contingency']:,.2f}"],
-            ['', ''],
-            ['SUBTOTAL GENERAL:', f"${totals['subtotal_general']:,.2f}"],
-            ['ITBIS (18%):', f"${totals['itbis']:,.2f}"],
-            ['', ''],
-            ['TOTAL GENERAL:', f"${totals['grand_total']:,.2f}"]
-        ]
-        totals_table = Table(totals_data, colWidths=[330, 170])
-        totals_table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, 0), bold_font),
-            ('FONTSIZE', (0, 0), (-1, 0), 9),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f0f4f8')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#004898')),
-            ('FONTNAME', (0, 1), (-1, -2), base_font),
-            ('FONTSIZE', (0, 1), (-1, -2), 8),
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-            ('ALIGN', (0, -1), (0, -1), 'RIGHT'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f9fbfd')),
-            ('TOPPADDING', (0, 0), (-1, -1), 3),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-         ]))
-        story.append(totals_table)
-        story.append(Spacer(1, 20))
-        if company_info.get('notes'):
-            story.append(Spacer(1, 14))
-            notes_header = Paragraph("<b>Notas:</b>", styles['Normal'])
-            notes_header.fontName = bold_font
-            notes_header.fontSize = 9
-            story.append(notes_header)
-            notes_style = ParagraphStyle(
-                'Notes',
-                fontName=base_font,
-                fontSize=8,
-                leading=11,
-                spaceAfter=4
-            )
-            for note in company_info['notes'].split('\n'):
-                if note.strip():
-                    story.append(Paragraph(note.strip(), notes_style))
-
-            # Add full-page 3D sketch if requested
-            if create_building_sketch_3d:
-                from reportlab.platypus import PageBreak
-                story.append(PageBreak())
-                try:
-                    img_3d = Image(create_building_sketch_3d, width=6.5*inch, height=9*inch)
-                    img_3d.hAlign = 'CENTER'
-                    story.append(img_3d)
-                except Exception as e:
-                    print(f"3D sketch error: {e}")
-
-        disclaimer_text = (
-            "<b>Aviso legal:</b> <b>Esta cotización es solo un estimado preliminar.</b> "
-            "Todos los precios están sujetos a cambios. El precio final será confirmado al momento de emitir la orden de compra. "
-            "Será necesaria una cotización formal para validar los términos y condiciones definitivos."
-        )
-        disclaimer_style = ParagraphStyle(
-            'Disclaimer',
-            fontName=base_font,
-            fontSize=6.5,
-            leading=8.5,
-            textColor=colors.HexColor('#444444')
-        )
-        disclaimer_para = Paragraph(disclaimer_text, disclaimer_style)
-        disclaimer_table = Table([[disclaimer_para]], colWidths=[6.5 * inch])
-        disclaimer_table.setStyle(TableStyle([
-            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
-            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fcfcfc')),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ]))
-        story.append(Spacer(1, 10))
-        story.append(disclaimer_table)
-        doc.build(story)
-        buffer.seek(0)
-        return buffer
-
-# --- MAIN APPLICATION ---
 def show_main_app():
-    # SIDEBAR
+    # Initialize session state
+    defaults = {
+        'authenticated': False,
+        'attempts': 0,
+        'username': "",
+        'current_client_id': None,
+        'quote_products': [],
+        'included_charges': {
+            'supervision': True,
+            'admin': True,
+            'insurance': True,
+            'transport': True,
+            'contingency': True,
+        },
+        'show_product_manager': False,
+        'editing_product_id': None,
+        'editing_quote_id': None,
+        'editing_quote_data': None,
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+    # Sidebar
     st.sidebar.header("👥 Gestión de Clientes")
-    st.sidebar.markdown("---")
-    client_mode = st.sidebar.radio("Modo:", ["Seleccionar Cliente", "Nuevo Cliente"], key="client_mode_radio")
-    if client_mode == "Seleccionar Cliente":
-        clients = database.get_all_clients()
-        if clients:
-            client_names = ["Seleccione..."] + [f"{c['company_name']}" for c in clients]
-            selected_index = st.sidebar.selectbox("Cliente:", range(len(client_names)), format_func=lambda x: client_names[x], key="client_selector")
-            if selected_index > 0:
-                selected_client = clients[selected_index - 1]
-                st.session_state.current_client_id = selected_client['id']
-                st.sidebar.success(f"✅ {selected_client['company_name']}")
-                with st.sidebar.expander("📋 Detalles del Cliente"):
-                    st.write(f"**Empresa:** {selected_client['company_name']}")
-                    st.write(f"**Contacto:** {selected_client.get('contact_name', 'N/A')}")
-                    st.write(f"**Email:** {selected_client.get('email', 'N/A')}")
-                    st.write(f"**Teléfono:** {selected_client.get('phone', 'N/A')}")
-                st.sidebar.markdown("**📊 Cálculos Guardados:**")
-                calculations = database.get_client_calculations(selected_client['id'])
-                if calculations:
-                    for calc in calculations:
-                        col1, col2 = st.sidebar.columns([3, 1])
-                        with col1:
-                            st.write(f"📁 {calc['project_name']}")
-                        with col2:
-                            if st.button("📂", key=f"load_{calc['id']}"):
-                                calc_details = database.get_calculation_details(calc['id'])
-                                st.session_state.current_calculation = calc_details
-                                st.rerun()
-                else:
-                    st.sidebar.info("Sin cálculos guardados")
+    mode = st.sidebar.radio("Modo:", ["Seleccionar Cliente", "Nuevo Cliente"])
+    
+    if mode == "Seleccionar Cliente":
+        clients = get_all_clients()
+        if len(clients) == 0:
+            st.sidebar.info("No hay clientes.")
         else:
-            st.sidebar.info("No hay clientes guardados")
+            names = ["Seleccione..."] + [c["company_name"] for c in clients]
+            idx = st.sidebar.selectbox("Cliente:", range(len(names)), format_func=lambda x: names[x])
+            if idx > 0:
+                client = clients[idx - 1]
+                st.session_state.current_client_id = client["id"]
+                st.sidebar.success(f"✅ {client['company_name']}")
     else:
-        with st.sidebar.form("new_client_form", clear_on_submit=True):
+        with st.sidebar.form("new_client"):
             company = st.text_input("Empresa *")
             contact = st.text_input("Contacto")
             email = st.text_input("Email")
@@ -692,587 +1033,722 @@ def show_main_app():
             notes = st.text_area("Notas")
             if st.form_submit_button("🟥 Guardar Cliente"):
                 if company:
-                    client_id = database.add_new_client(
-                        company_name=company,
-                        contact_name=contact,
-                        email=email,
-                        phone=phone,
-                        address=address,
-                        tax_id=tax_id,
-                        notes=notes
-                    )
+                    cid = add_client(company, contact, email, phone, address, tax_id, notes)
+                    st.session_state.current_client_id = cid
                     st.sidebar.success("✅ Cliente guardado!")
-                    st.session_state.current_client_id = client_id
                     st.rerun()
                 else:
-                    st.sidebar.error("Nombre de empresa requerido")
+                    st.sidebar.error("Empresa requerida.")
+
     st.sidebar.markdown("---")
-    if st.sidebar.button("🟥 Cerrar Sesión", key="logout_btn"):
-        st.session_state.authenticated = False
-        st.session_state.username = ""
+    
+    # Product Management Toggle
+    if st.sidebar.button("📦 Gestión de Productos", use_container_width=True):
+        st.session_state.show_product_manager = not st.session_state.show_product_manager
+    
+    if st.sidebar.button("🟥 Cerrar Sesión"):
+        st.session_state.clear()
         st.rerun()
 
-    # MAIN HEADER
-    st.markdown("""
-    <div class="header-container">
-        <h1 class="main-title">RIGC 2030</h1>
-        <p class="subtitle">Sistema de Cálculo Industrial</p>
-    </div>
-    """, unsafe_allow_html=True)
+    # Header
+    st.markdown('<h1 style="text-align:center; font-size:48px;">RIGC 2030</h1>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align:center; color:#a3a3a3; margin-top:-10px;">Sistema de Cálculo Industrial</p>', unsafe_allow_html=True)
 
-    # CLIENT CONTEXT
-    if st.session_state.current_client_id:
-        client = database.get_client_by_id(st.session_state.current_client_id)
-        st.info(f"**Cliente Activo:** {client['company_name']} - {client.get('contact_name', 'Sin contacto')}")
-    else:
-        st.warning("⚠️ No hay cliente seleccionado. Seleccione o cree un cliente en la barra lateral.")
-    if st.session_state.current_calculation:
-        calc = st.session_state.current_calculation
-        st.success(f"📂 Cálculo cargado: {calc['project_name']}")
-        if st.button("🔄 Nuevo Cálculo"):
-            st.session_state.current_calculation = None
-            st.rerun()
-    st.divider()
-
-    # SECTION 1: FULL CALCULATION
-    st.markdown("""
-        <div class="header-container">
-            <h1 class="main-title">CÁLCULO COMPLETO</h1>
-            <p class="subtitle">ESTRUCTURA ➕ MATERIALES</p>
-        </div>
-    """, unsafe_allow_html=True)
-
-    # Load defaults
-    if st.session_state.get('current_calculation'):
-        calc_data = st.session_state.current_calculation
-        default_largo = calc_data.get('warehouse_length', 80)
-        default_ancho = calc_data.get('warehouse_width', 25)
-        default_alto_lateral = calc_data.get('lateral_height', 7)
-        default_alto_techado = calc_data.get('roof_height', 9)
-        default_distancia = calc_data.get('axis_distance', 7.27)
-    else:
-        default_largo = 80
-        default_ancho = 25
-        default_alto_lateral = 7
-        default_alto_techado = 9
-        default_distancia = 7.27
-
-# Inputs
-        st.markdown("### ⚙️ Configuración de la Estructura")
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            largo = st.number_input("Largo (m)", min_value=10.0, max_value=200.0, value=float(default_largo), step=0.1, key="steel_largo")
-        with col2:
-            ancho = st.number_input("Ancho (m)", min_value=10.0, max_value=100.0, value=float(default_ancho), step=0.1, key="steel_ancho")
-        with col3:
-            alto_lateral = st.number_input("Altura Lateral (m)", min_value=4.0, max_value=20.0, value=float(default_alto_lateral), step=0.1, key="steel_alto_lateral")
-        with col4:
-            alto_techado = st.number_input("Altura Techado (m)", min_value=5.0, max_value=25.0, value=float(default_alto_techado), step=0.1, key="steel_alto_techado")
-        with col5:
-            distancia = st.number_input("Distancia entre ejes (m)", min_value=0.1, max_value=20.0, value=float(default_distancia), step=0.01, key="axis_distance")
-
-        # Validación
-        if alto_techado < alto_lateral:
-            st.warning("⚠️ La altura del techado debe ser mayor o igual a la altura lateral.")
-            st.stop()
-
-
-    # Profile selection
-    st.markdown("### 🔧 Selección de Perfiles")
-    default_columna = "W12x136"
-    default_portico = "W16x100"
-    default_tijerilla = "W14x159"
-    default_lateral = "W12x87"
-    default_bracing = "L6x4x1/2"
-    default_sagrod = "L3x3x1/4"
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Perfiles Principales**")
-        col1a, col1b = st.columns(2)
-        with col1a:
-            columnas = st.selectbox("Perfil Columnas centrales", options=all_profiles, index=all_profiles.index(default_columna) if default_columna in all_profiles else 0, key="col_profile")
-            tijerillas = st.selectbox("Perfil Tijerillas", options=all_profiles, index=all_profiles.index(default_tijerilla) if default_tijerilla in all_profiles else 0, key="beam_profile")
-        with col1b:
-            porticos = st.selectbox("Perfil Pórticos de frenado", options=all_profiles, index=all_profiles.index(default_portico) if default_portico in all_profiles else 0, key="frame_profile")
-        st.markdown("**Perfiles de Refuerzo**")
-        bracing = st.selectbox("Perfil Bracing (arriostramiento)", options=all_profiles, index=all_profiles.index(default_bracing) if default_bracing in all_profiles else 0, key="bracing_profile")
-        sagrods = st.selectbox("Perfil Sag Rods (tensores)", options=all_profiles, index=all_profiles.index(default_sagrod) if default_sagrod in all_profiles else 0, key="sagrod_profile")
-    with col2:
-        st.markdown("**Configuración Lateral**")
-        col2a, col2b = st.columns(2)
-        with col2a:
-            columnas_laterales = st.selectbox("Perfil Columnas laterales", options=all_profiles, index=all_profiles.index(default_lateral) if default_lateral in all_profiles else 0, key="lat_profile")
-            num_lados = st.selectbox("Lados laterales", options=[1, 2], index=1, key="lat_lados")
-        with col2b:
-            incluir_laterales = st.checkbox("Incluir Columnas laterales", value=True, key="include_lateral")
-
-    with st.expander("📊 Ver Pesos de Perfiles Seleccionados"):
-        col1, col2, col3, col4, col5, col6 = st.columns(6)
-        with col1:
-            st.metric("Columnas centrales", f"{profile_weights.get(columnas, 0)} lbs/ft")
-        with col2:
-            st.metric("Tijerillas", f"{profile_weights.get(tijerillas, 0)} lbs/ft")
-        with col3:
-            st.metric("Pórticos de frenado", f"{profile_weights.get(porticos, 0)} lbs/ft")
-        with col4:
-            st.metric("Columnas laterales", f"{profile_weights.get(columnas_laterales, 0)} lbs/ft")
-        with col5:
-            st.metric("Bracing", f"{profile_weights.get(bracing, 0)} lbs/ft")
-        with col6:
-            st.metric("Sag Rods", f"{profile_weights.get(sagrods, 0)} lbs/ft")
-
-    if st.button("🟥 CALCULAR ESTRUCTURA + MATERIALES", type="primary", key="calc_full_btn", use_container_width=True):
-        try:
-            num_ejes = int((largo / distancia) + 1)
-            num_bays_largo = num_ejes - 1
-            if incluir_laterales:
-                num_columnas_laterales = (num_bays_largo + 1) * num_lados
-            else:
-                num_columnas_laterales = 0
-
-            steel_data = [
-                {"perfil": columnas, "funcion": "Columnas centrales", "peso_m": profile_weights.get(columnas, 0) * 1.488, "cantidad": num_ejes * 2, "longitud": alto_lateral, "eje": "E1-E6", "proveedor": "AceroDominicana", "acero": "A992"},
-                {"perfil": porticos, "funcion": "Pórticos de frenado", "peso_m": profile_weights.get(porticos, 0) * 1.488, "cantidad": 2, "longitud": ancho, "eje": "F1-F3", "proveedor": "AceroDominicana", "acero": "A572"},
-                {"perfil": tijerillas, "funcion": "Tijerillas", "peso_m": profile_weights.get(tijerillas, 0) * 1.488, "cantidad": num_ejes * 2, "longitud": ancho * 1.1, "eje": "Cubierta", "proveedor": "Metalmecánica SRL", "acero": "A992"},
-                {"perfil": columnas_laterales, "funcion": "Columnas laterales", "peso_m": profile_weights.get(columnas_laterales, 0) * 1.488, "cantidad": num_columnas_laterales, "longitud": alto_lateral, "eje": "L1-L5", "proveedor": "Metalmecánica SRL", "acero": "A36"},
-                {"perfil": bracing, "funcion": "Bracing (arriostramiento)", "peso_m": profile_weights.get(bracing, 0) * 1.488, "cantidad": 2 * num_bays_largo * num_lados, "longitud": math.sqrt(distancia**2 + alto_lateral**2), "eje": "Entre columnas", "proveedor": "AceroDominicana", "acero": "A36"},
-                {"perfil": sagrods, "funcion": "Sag Rods (tensores)", "peso_m": profile_weights.get(sagrods, 0) * 1.488, "cantidad": int((largo / 1.5) * (num_ejes * 2)), "longitud": 3.5, "eje": "Cubierta", "proveedor": "Metalmecánica SRL", "acero": "A36"},
-            ]
-            df_steel = pd.DataFrame(steel_data)
-            df_steel["peso_total"] = df_steel["peso_m"] * df_steel["cantidad"] * df_steel["longitud"]
-            df_steel["tipo"] = "Acero Estructural"
-
-            mats = calculate_materials(largo, ancho, alto_lateral, alto_techado, distancia)
-            materials_data = [
-                {"perfil": "Aluzinc Techo", "funcion": "Cubierta", "peso_m": 0, "cantidad": mats['aluzinc_techo'], "longitud": 0, "eje": "Cubierta", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
-                {"perfil": "Aluzinc Pared", "funcion": "Muros", "peso_m": 0, "cantidad": mats['aluzinc_pared'], "longitud": 0, "eje": "Perímetro", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
-                {"perfil": "Correa de Techo", "funcion": "Soporte Techo", "peso_m": 0, "cantidad": mats['correa_techo'], "longitud": 0, "eje": "Cubierta", "proveedor": "Metalmecánica SRL", "acero": "Acero", "tipo": "Material de Cierre"},
-                {"perfil": "Correa de Pared", "funcion": "Soporte Muro", "peso_m": 0, "cantidad": mats['correa_pared'], "longitud": 0, "eje": "Perímetro", "proveedor": "Metalmecánica SRL", "acero": "Acero", "tipo": "Material de Cierre"},
-                {"perfil": "Tornillos", "funcion": "Fijación", "peso_m": 0, "cantidad": mats['tornillos_techo'], "longitud": 0, "eje": "General", "proveedor": "Ferretería", "acero": "Acero", "tipo": "Material de Cierre"},
-                {"perfil": "Cubrefaltas", "funcion": "Cierre Perimetral", "peso_m": 0, "cantidad": mats['cubrefaltas'], "longitud": 0, "eje": "Cubierta", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
-                {"perfil": "Canaletas", "funcion": "Drenaje", "peso_m": 0, "cantidad": mats['canaletas'], "longitud": 0, "eje": "Perímetro", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
-                {"perfil": "Bajantes", "funcion": "Drenaje Vertical", "peso_m": 0, "cantidad": mats['bajantes'], "longitud": 0, "eje": "Esquinas", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
-                {"perfil": "Caballetes", "funcion": "Caballete", "peso_m": 0, "cantidad": mats['caballetes'], "longitud": 0, "eje": "Cubierta", "proveedor": "Laminas RD", "acero": "Aluzinc", "tipo": "Material de Cierre"},
-            ]
-            df_materials = pd.DataFrame(materials_data)
-            df_materials["peso_total"] = df_materials["cantidad"]
-
-            df_combined = pd.concat([df_steel, df_materials], ignore_index=True)
-            st.session_state.full_calculation_result = df_combined
-
-            st.divider()
-            st.markdown('<h3 style="color: #1023c9;">📊 Resultados del Cálculo</h3>', unsafe_allow_html=True)
-            total_peso_acero = df_combined[df_combined["tipo"] == "Acero Estructural"]["peso_total"].sum()
-            total_materiales = len(df_combined[df_combined["tipo"] == "Material de Cierre"])
-            col_r1, col_r2, col_r3 = st.columns(3)
-            with col_r1:
-                st.metric("Peso Total de Acero", f"{total_peso_acero:,.2f} kg")
-            with col_r2:
-                st.metric("Ítems de Materiales", f"{total_materiales}")
-            with col_r3:
-                st.metric("Área Total", f"{largo * ancho:,.0f} m²")
-
-            st.markdown("#### 🔹 Acero Estructural")
-            peso_acero = df_combined[df_combined["tipo"] == "Acero Estructural"]
-            if not peso_acero.empty:
-                res = peso_acero.groupby("funcion")["peso_total"].sum().reset_index()
-                res.columns = ["Elemento", "Peso (kg)"]
-                res["Peso (kg)"] = res["Peso (kg)"].map("{:,.2f}".format)
-                st.dataframe(res, use_container_width=True, hide_index=True)
-
-            st.markdown("#### 📦 Materiales de Cierre")
-            materiales_df = df_combined[df_combined["tipo"] == "Material de Cierre"]
-            if not materiales_df.empty:
-                display = materiales_df[["perfil", "cantidad", "eje", "proveedor"]].rename(columns={
-                    "perfil": "Material", "cantidad": "Cantidad", "eje": "Ubicación", "proveedor": "Proveedor"
+    # Product Management Section
+    if st.session_state.show_product_manager:
+        st.markdown("---")
+        st.markdown("## 📦 Gestión de Productos")
+        
+        tab1, tab2, tab3 = st.tabs(["📋 Lista de Productos", "📁 Sincronizar desde CSV", "➕ Agregar/Editar Producto"])
+        
+        with tab1:
+            products = get_products_for_dropdown()
+            if products:
+                # Display products in a table
+                products_df = pd.DataFrame(products)
+                products_df = products_df.rename(columns={
+                    'id': 'ID',
+                    'name': 'Nombre',
+                    'description': 'Descripción',
+                    'unit_price': 'Precio Unitario'
                 })
-                def fmt(q, mat):
-                    if mat in ["Bajantes"]: return f"{q:,.0f} und"
-                    elif "Tornillos" in mat: return f"{q:,.0f} und"
-                    else: return f"{q:,.2f} pies"
-                display["Cantidad"] = display.apply(lambda row: fmt(row["Cantidad"], row["Material"]), axis=1)
-                st.dataframe(display[["Material", "Cantidad", "Ubicación", "Proveedor"]], use_container_width=True, hide_index=True)
+                
+                st.dataframe(
+                    products_df,
+                    column_config={
+                        "Precio Unitario": st.column_config.NumberColumn(
+                            "Precio Unitario",
+                            format="$%.2f"
+                        )
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+                
+                st.info(f"📊 Total de productos: {len(products)}")
+                
+                # Edit/Delete buttons
+                st.markdown("#### Acciones")
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    product_to_edit = st.selectbox(
+                        "Seleccionar producto para editar/eliminar",
+                        options=[p['id'] for p in products],
+                        format_func=lambda x: next(p['name'] for p in products if p['id'] == x)
+                    )
+                with col2:
+                    if st.button("✏️ Editar", use_container_width=True):
+                        st.session_state.editing_product_id = product_to_edit
+                        st.rerun()
+                
+                # Delete with confirmation
+                if st.button("🗑️ Eliminar Producto Seleccionado", type="secondary"):
+                    st.session_state.confirm_delete_product = product_to_edit
+                
+                # Confirmation dialog for delete
+                if 'confirm_delete_product' in st.session_state:
+                    product = next(p for p in products if p['id'] == st.session_state.confirm_delete_product)
+                    st.warning(f"⚠️ ¿Está seguro que desea eliminar '{product['name']}'?")
+                    col1, col2, col3 = st.columns([1, 1, 2])
+                    with col1:
+                        if st.button("✅ Sí, Eliminar", type="primary"):
+                            delete_product(st.session_state.confirm_delete_product)
+                            del st.session_state.confirm_delete_product
+                            st.success("Producto eliminado exitosamente")
+                            st.rerun()
+                    with col2:
+                        if st.button("❌ Cancelar"):
+                            del st.session_state.confirm_delete_product
+                            st.rerun()
+            else:
+                st.info("No hay productos en el catálogo. Agregue uno en la pestaña siguiente.")
+        
+        with tab2:
+            st.markdown("### 📁 Cargar Productos desde CSV")
+            
+            # Info box
+            st.info("""
+            **Formato del CSV:**
+            - Columnas requeridas: `name`, `unit_price`
+            - Columna opcional: `description`
+            - El archivo debe llamarse `products.csv` o puede subirlo manualmente
+            """)
+            
+            # Check if products.csv exists
+            if os.path.exists(PRODUCTS_CSV_PATH):
+                st.success(f"✅ Archivo encontrado: `{PRODUCTS_CSV_PATH}`")
+                
+                # Preview CSV
+                try:
+                    preview_df = pd.read_csv(PRODUCTS_CSV_PATH)
+                    st.markdown("#### Vista Previa del CSV")
+                    st.dataframe(preview_df.head(10), use_container_width=True)
+                    st.caption(f"Mostrando {min(10, len(preview_df))} de {len(preview_df)} productos")
+                except Exception as e:
+                    st.error(f"Error leyendo CSV: {str(e)}")
+                
+                # Sync button
+                if st.button("🔄 Sincronizar Productos desde CSV", type="primary", use_container_width=True):
+                    result, message = sync_products_from_csv()
+                    if result:
+                        st.success(message)
+                        if result['errors']:
+                            with st.expander("⚠️ Ver errores"):
+                                for error in result['errors']:
+                                    st.warning(error)
+                        st.rerun()
+                    else:
+                        st.error(message)
+            else:
+                st.warning(f"⚠️ No se encontró `{PRODUCTS_CSV_PATH}`")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Create sample CSV
+                    if st.button("📄 Crear CSV de Ejemplo", use_container_width=True):
+                        sample_df = create_sample_csv()
+                        st.success(f"✅ Creado: `{PRODUCTS_CSV_PATH}`")
+                        st.dataframe(sample_df, use_container_width=True)
+                        st.rerun()
+                
+                with col2:
+                    # Download template
+                    template_csv = "name,description,unit_price\nProducto Ejemplo,Descripción del producto,100.00\n"
+                    st.download_button(
+                        "📥 Descargar Plantilla CSV",
+                        template_csv,
+                        "products_template.csv",
+                        "text/csv",
+                        use_container_width=True
+                    )
+            
+            st.markdown("---")
+            
+            # Manual CSV upload
+            st.markdown("#### 📤 Subir CSV Manualmente")
+            uploaded_file = st.file_uploader(
+                "Seleccione archivo CSV",
+                type=['csv'],
+                help="Formato: name, description, unit_price"
+            )
+            
+            if uploaded_file is not None:
+                try:
+                    # Save uploaded file
+                    with open(PRODUCTS_CSV_PATH, 'wb') as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    st.success(f"✅ Archivo guardado como `{PRODUCTS_CSV_PATH}`")
+                    
+                    # Preview
+                    preview_df = pd.read_csv(PRODUCTS_CSV_PATH)
+                    st.dataframe(preview_df.head(10), use_container_width=True)
+                    
+                    # Auto-sync option
+                    if st.button("🔄 Sincronizar Ahora", type="primary"):
+                        result, message = sync_products_from_csv()
+                        if result:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
+                            
+                except Exception as e:
+                    st.error(f"Error procesando archivo: {str(e)}")
+            
+            # Export current products to CSV
+            st.markdown("---")
+            st.markdown("#### 📥 Exportar Productos Actuales")
+            
+            if st.button("💾 Exportar a CSV", use_container_width=True):
+                products = get_products_for_dropdown()
+                if products:
+                    export_df = pd.DataFrame(products)
+                    export_df = export_df[['name', 'description', 'unit_price']]
+                    csv_data = export_df.to_csv(index=False)
+                    
+                    st.download_button(
+                        "📥 Descargar products.csv",
+                        csv_data,
+                        "products_export.csv",
+                        "text/csv",
+                        use_container_width=True
+                    )
+                    st.success(f"✅ {len(products)} productos listos para descargar")
+                else:
+                    st.warning("No hay productos para exportar")
+        
+        with tab3:
+            # Check if editing
+            editing_product = None
+            if st.session_state.editing_product_id:
+                products = get_products_for_dropdown()
+                editing_product = next((p for p in products if p['id'] == st.session_state.editing_product_id), None)
+            
+            with st.form("product_form"):
+                st.markdown(f"#### {'✏️ Editar Producto' if editing_product else '➕ Nuevo Producto'}")
+                
+                name = st.text_input(
+                    "Nombre del Producto *",
+                    value=editing_product['name'] if editing_product else ""
+                )
+                description = st.text_area(
+                    "Descripción",
+                    value=editing_product['description'] if editing_product else ""
+                )
+                unit_price = st.number_input(
+                    "Precio Unitario ($) *",
+                    min_value=0.01,
+                    step=0.01,
+                    value=float(editing_product['unit_price']) if editing_product else 1.00
+                )
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    submit = st.form_submit_button(
+                        "💾 Actualizar Producto" if editing_product else "➕ Agregar Producto",
+                        use_container_width=True,
+                        type="primary"
+                    )
+                with col2:
+                    if editing_product:
+                        cancel = st.form_submit_button("❌ Cancelar", use_container_width=True)
+                        if cancel:
+                            st.session_state.editing_product_id = None
+                            st.rerun()
+                
+                if submit:
+                    if name and unit_price > 0:
+                        if editing_product:
+                            # Update existing product
+                            success = update_product(
+                                editing_product['id'],
+                                name,
+                                description,
+                                unit_price
+                            )
+                            if success:
+                                st.success(f"✅ Producto '{name}' actualizado exitosamente")
+                                st.session_state.editing_product_id = None
+                                st.rerun()
+                            else:
+                                st.error("❌ Error: Ya existe un producto con ese nombre")
+                        else:
+                            # Add new product
+                            result = add_product(name, description, unit_price)
+                            if result:
+                                st.success(f"✅ Producto '{name}' agregado exitosamente")
+                                st.rerun()
+                            else:
+                                st.error("❌ Error: Ya existe un producto con ese nombre")
+                    else:
+                        st.error("❌ Complete todos los campos requeridos (*)")
+        
+        st.markdown("---")
+        return  # Don't show quote form when in product manager
 
-            with st.expander("📋 Ver Desglose Detallado"):
-                df_display = df_combined[[
-                    "tipo", "perfil", "funcion", "cantidad", "longitud", "peso_m", "peso_total", "eje", "proveedor", "acero"
-                ]].copy()
-                df_display.rename(columns={
-                    "tipo": "Tipo", "perfil": "Perfil/Material", "funcion": "Función",
-                    "cantidad": "Cant.", "longitud": "Long. (m)", "peso_m": "Peso/m (kg)",
-                    "peso_total": "Total (kg)", "eje": "Eje", "proveedor": "Proveedor", "acero": "Material"
-                }, inplace=True)
-                df_display["Total (kg)"] = df_display["Total (kg)"].map(lambda x: f"{x:,.2f}" if x != 0 else "N/A")
-                df_display["Peso/m (kg)"] = df_display["Peso/m (kg)"].map(lambda x: f"{x:,.2f}" if x != 0 else "N/A")
-                st.dataframe(df_display, use_container_width=True, hide_index=True)
-
-        except Exception as e:
-            st.error(f"❌ Error en el cálculo: {str(e)}")
-            st.info("Verifica que todos los perfiles tengan pesos definidos en el diccionario profile_weights")
+    if st.session_state.current_client_id:
+        client = get_client_by_id(st.session_state.current_client_id)
+        # Display client info in a nice card
+        st.markdown(f"""
+        <div style="background:rgba(41,128,185,0.1); padding:1rem; border-radius:8px; border-left:4px solid #2980b9;">
+            <div style="font-size:18px; font-weight:600; color:#2980b9; margin-bottom:0.5rem;">
+                👤 Cliente Activo
+            </div>
+            <div style="font-size:16px; font-weight:500; margin-bottom:0.3rem;">
+                {client['company_name']}
+            </div>
+            <div style="font-size:14px; color:#a3a3a3;">
+                {'📞 ' + client.get('contact_name', 'Sin contacto') if client.get('contact_name') else '📞 Sin contacto'}
+                {' | 🆔 RNC/Cédula: ' + client.get('tax_id', 'N/A') if client.get('tax_id') else ''}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.warning("⚠️ Seleccione o cree un cliente en la barra lateral.")
 
     st.divider()
 
-    # SECTION 2: QUOTATION
-    st.markdown("""
-    <style>
-        /* ===== Custom Header Styling ===== */
-        .header-container {
-            text-align: center;
-            padding: 3rem 0 3rem 0;
-            margin-bottom: 2.5rem;
-            position: relative;
-        }
-
-        /* Elegant glow behind text */
-        .header-container::after {
-            content: "";
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 280px;
-            height: 280px;
-            background: radial-gradient(circle, rgba(0,150,255,0.12) 0%, rgba(0,0,0,0) 70%);
-            filter: blur(40px);
-            z-index: 0;
-        }
-
-        .main-title {
-            position: relative;
-            z-index: 1;
-            font-size: 100px;
-            font-weight: 900;
-            background: linear-gradient(120deg, #00d4ff 0%, #007bff 45%, #9b00ff 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            text-transform: uppercase;
-            letter-spacing: 4px;
-            margin-bottom: 0.3rem;
-            line-height: 1.1;
-            animation: fadeIn 1.2s ease;
-        }
-
-        .subtitle {
-            position: relative;
-            z-index: 1;
-            font-size: 22px;
-            color: #a3a3a3;
-            font-weight: 400;
-            letter-spacing: 6px;
-            text-transform: uppercase;
-            margin-top: -4px;
-            animation: fadeIn 1.8s ease;
-        }
-
-        .main-title, .subtitle {
-            text-shadow: 0px 0px 20px rgba(0, 100, 255, 0.15);
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        @media (max-width: 768px) {
-            .main-title {
-                font-size: 50px;
-                letter-spacing: 3px;
-            }
-            .subtitle {
-                font-size: 18px;
-                letter-spacing: 4px;
-            }
-        }
-    </style>
-
-    <!-- Gradient header block -->
-    <div class="header-container">
-        <h1 class="main-title">COTIZACION</h1>
-        <p class="subtitle">ESTRUCTURA ➕ MATERIALES</p>
-    </div>
-    """, unsafe_allow_html=True)
-
+    # Quotation Form
     st.markdown("### 📝 Información de la Cotización")
+    
+    # Check if we're editing a quote
+    editing_mode = st.session_state.editing_quote_id is not None
+    if editing_mode:
+        st.info(f"✏️ **Modo Edición**: Editando cotización {st.session_state.editing_quote_id}")
+        if st.button("❌ Cancelar Edición"):
+            st.session_state.editing_quote_id = None
+            st.session_state.editing_quote_data = None
+            st.session_state.quote_products = []
+            st.rerun()
+    
     col1, col2, col3 = st.columns(3)
     with col1:
-        company_name = st.text_input("Nombre de Empresa", value="RIGC INDUSTRIAL", key="company_name")
-        phone = st.text_input("Teléfono", value="809-555-0100", key="company_phone")
+        company_name_info = st.text_input("Nombre de Empresa", value="RIGC INDUSTRIAL", key="company_info")
+        phone_info = st.text_input("Teléfono", value="809-555-0100", key="phone_info")
     with col2:
-        email = st.text_input("Email", value="info@rigc.com", key="company_email")
-        quoted_by = st.text_input("Cotizado por", value=st.session_state.username, key="quoted_by")
+        email_info = st.text_input("Email", value="info@rigc.com", key="email_info")
+        quoted_by = st.text_input("Cotizado por", value=st.session_state.username)
     with col3:
-        quote_validity = st.number_input("Validez (días)", value=30, min_value=1, key="quote_validity")
+        validity = st.number_input("Validez (días)", value=30, min_value=1)
 
     col1, col2 = st.columns(2)
     with col1:
         if st.session_state.current_client_id:
-            client = database.get_client_by_id(st.session_state.current_client_id)
-            client_name = st.text_input("Cliente", value=client['company_name'], key="client_name")
+            client = get_client_by_id(st.session_state.current_client_id)
+            client_name = st.text_input("Nombre del Cliente", value=client['company_name'], key="client_name_display")
         else:
-            client_name = st.text_input("Cliente", placeholder="Nombre del cliente", key="client_name")
+            client_name = st.text_input("Nombre del Cliente", placeholder="Nombre del cliente", key="client_name_input")
     with col2:
-        project_name = st.text_input("Proyecto", placeholder="Nombre del proyecto", key="project_name")
+        # Pre-fill project name if editing
+        default_project = st.session_state.editing_quote_data.get('project_name', '') if st.session_state.editing_quote_data else ''
+        project_name = st.text_input("Proyecto", placeholder="Nombre del proyecto", value=default_project)
 
-    notes = st.text_area("Notas adicionales", placeholder="Condiciones especiales, observaciones...", key="notes")
+    # Pre-fill notes if editing
+    default_notes = st.session_state.editing_quote_data.get('notes', '') if st.session_state.editing_quote_data else ''
+    notes = st.text_area("Notas adicionales", placeholder="Condiciones especiales...", value=default_notes)
 
-    if st.button("🟥 IMPORTAR CALCULO COMPLETO", type="primary", key="import_full", use_container_width=True):
-        if 'full_calculation_result' in st.session_state and not st.session_state.full_calculation_result.empty:
-            df = st.session_state.full_calculation_result.copy()
-            # Preserve existing manual products (not auto-generated)
-            existing_manual = [
-                p for p in st.session_state.get('quote_products', [])
-                if not p.get('auto_imported', False)
-            ]
-            new_products = []
-
-            # --- 1. Process structural steel (grouped by function) ---
-            steel_df = df[df["tipo"] == "Acero Estructural"].copy()
-            steel_df["toneladas"] = steel_df["peso_total"] / 1000
-            steel_grouped = steel_df.groupby("funcion")["toneladas"].sum().to_dict()
-            ton_estructura_total = sum(steel_grouped.values())
-            ton_conexiones = ton_estructura_total * 0.08
-
-            steel_mapping = {
-                "Columnas centrales": "Estructura de Acero - Columnas Centrales",
-                "Columnas laterales": "Estructura de Acero - Columnas Laterales",
-                "Tijerillas": "Estructura de Acero - Tijerillas",
-                "Pórticos de frenado": "Estructura de Acero - Pórticos",
-                "Bracing (arriostramiento)": "Estructura de Acero - Bracing",
-                "Sag Rods (tensores)": "Estructura de Acero - Sag Rods"
-            }
-            for func, tons in steel_grouped.items():
-                product_name = steel_mapping.get(func, f"Estructura de Acero - {func}")
-                new_products.append({
-                    "product_name": product_name,
-                    "quantity": round(tons, 2),
-                    "unit_price": 1200.0,
-                    "auto_imported": True
-                })
-
-            new_products.append({
-                "product_name": "Conexiones y Accesorios",
-                "quantity": round(ton_conexiones, 2),
-                "unit_price": 1500.0,
-                "auto_imported": True
-            })
-
-            # --- 2. Process ALL closure materials (one line per material) ---
-            materials_df = df[df["tipo"] == "Material de Cierre"].copy()
-            for _, row in materials_df.iterrows():
-                perfil = row["perfil"]
-                cantidad = row["cantidad"]
-                unit_price_map = {
-                    "Aluzinc Techo": 3.5,
-                    "Aluzinc Pared": 3.5,
-                    "Tornillos": 0.15,
-                    "Canaletas": 12.0,
-                    "Bajantes": 85.0,
-                    "Cubrefaltas": 4.2,
-                    "Correa de Techo": 2.8,
-                    "Correa de Pared": 2.6,
-                    "Caballetes": 5.0,
-                }
-                unit_price = unit_price_map.get(perfil, 1.0)
-                if perfil in ["Bajantes", "Tornillos"]:
-                    qty = int(round(cantidad))
-                else:
-                    qty = round(cantidad, 2)
-                new_products.append({
-                    "product_name": perfil,
-                    "quantity": qty,
-                    "unit_price": unit_price,
-                    "auto_imported": True
-                })
-
-            for p in new_products:
-                p["subtotal"] = p["quantity"] * p["unit_price"]
-
-            st.session_state.quote_products = existing_manual + new_products
-            st.success("✅ Todos los productos del cálculo importados (estructura + materiales)")
-            st.rerun()
-        else:
-            st.warning("⚠️ Ejecute primero el cálculo en la sección superior.")
-
-    st.markdown("#### ➕ Agregar Producto Manual")
-    with st.form("add_product_form", clear_on_submit=True):
-        col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+    # Product Selection
+    st.markdown("#### ➕ Agregar Producto")
+    products_list = get_products_for_dropdown()
+    if not products_list:
+        st.warning("No hay productos. Use el formulario manual.")
+    else:
+        selected_id = st.selectbox(
+            "Producto desde base de datos",
+            options=[p["id"] for p in products_list],
+            format_func=lambda x: next(p["name"] for p in products_list if p["id"] == x)
+        )
+        prod = next(p for p in products_list if p["id"] == selected_id)
+        col1, col2 = st.columns(2)
         with col1:
-            new_product_name = st.text_input("Producto")
+            qty = st.number_input("Cantidad", min_value=0.0, step=1.0, key="db_qty")
         with col2:
-            new_quantity = st.number_input("Cantidad", min_value=0.0, step=1.0)
-        with col3:
-            new_unit_price = st.number_input("Precio Unit.", min_value=0.0, step=0.01)
-        with col4:
-            st.write("")
-            add_product = st.form_submit_button("➕")
-        if add_product and new_product_name and new_quantity > 0 and new_unit_price > 0:
-            st.session_state.quote_products = st.session_state.get('quote_products', [])
+            add_discount = st.checkbox("Agregar Descuento", key="db_discount_check")
+        
+        if add_discount:
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                discount_type_db = st.selectbox("Tipo", ["percentage", "fixed"], 
+                                            format_func=lambda x: {"percentage": "Porcentaje (%)", "fixed": "Monto Fijo ($)"}[x],
+                                            key="db_disc_type")
+            with col_d2:
+                if discount_type_db == "percentage":
+                    discount_value_db = st.number_input("Descuento (%)", min_value=0.0, max_value=100.0, step=0.1, value=0.0, key="db_disc_val")
+                else:
+                    discount_value_db = st.number_input("Descuento ($)", min_value=0.0, step=0.01, value=0.0, key="db_disc_val")
+        else:
+            discount_type_db = "none"
+            discount_value_db = 0.0
+        
+        if st.button("➕ Agregar desde DB"):
+            if qty > 0:
+                st.session_state.quote_products.append({
+                    "product_name": prod["name"],
+                    "quantity": qty,
+                    "unit_price": prod["unit_price"],
+                    "discount_type": discount_type_db,
+                    "discount_value": discount_value_db
+                })
+                st.rerun()
+            else:
+                st.warning("La cantidad debe ser mayor a 0")
+
+    # Manual Product Entry
+    with st.form("manual_product"):
+        st.markdown("#### ➕ Producto Manual")
+        col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+        name = col1.text_input("Nombre")
+        qty = col2.number_input("Cantidad", min_value=0.0, step=1.0)
+        price = col3.number_input("Precio Unit.", min_value=0.0, step=0.01)
+        
+        # Discount options
+        st.markdown("##### 💰 Descuento (Opcional)")
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            discount_type = st.selectbox("Tipo de Descuento", ["none", "percentage", "fixed"], 
+                                        format_func=lambda x: {"none": "Sin Descuento", "percentage": "Porcentaje (%)", "fixed": "Monto Fijo ($)"}[x])
+        with col_d2:
+            if discount_type != "none":
+                if discount_type == "percentage":
+                    discount_value = st.number_input("Descuento (%)", min_value=0.0, max_value=100.0, step=0.1, value=0.0)
+                else:
+                    discount_value = st.number_input("Descuento ($)", min_value=0.0, step=0.01, value=0.0)
+            else:
+                discount_value = 0.0
+        
+        submitted = col4.form_submit_button("➕")
+        if submitted and name and qty > 0 and price > 0:
             st.session_state.quote_products.append({
-                'product_name': new_product_name,
-                'quantity': new_quantity,
-                'unit_price': new_unit_price,
-                'subtotal': new_quantity * new_unit_price
+                "product_name": name,
+                "quantity": qty,
+                "unit_price": price,
+                "discount_type": discount_type,
+                "discount_value": discount_value
             })
             st.rerun()
 
-    if st.session_state.get('quote_products'):
-        df_prod = pd.DataFrame(st.session_state.quote_products)
-        df_prod['subtotal'] = df_prod['quantity'] * df_prod['unit_price']
+    # Quote Display & Controls
+    if st.session_state.quote_products:
+        # Calculate item discounts for display
+        for p in st.session_state.quote_products:
+            discount_amt = calculate_item_discount(
+                p.get('unit_price', 0),
+                p.get('quantity', 0),
+                p.get('discount_type', 'none'),
+                p.get('discount_value', 0)
+            )
+            p['discount_amount'] = discount_amt
+            p['final_price'] = (p.get('quantity', 0) * p.get('unit_price', 0)) - discount_amt
+        
+        df = pd.DataFrame(st.session_state.quote_products)
+        df["subtotal"] = df["quantity"] * df["unit_price"]
+        
         edited = st.data_editor(
-            df_prod,
+            df,
             column_config={
                 "product_name": st.column_config.TextColumn("Producto", width="large"),
                 "quantity": st.column_config.NumberColumn("Cantidad", format="%.2f"),
                 "unit_price": st.column_config.NumberColumn("Precio Unit. ($)", format="%.2f"),
-                "subtotal": st.column_config.NumberColumn("Subtotal ($)", format="%.2f", disabled=True)
+                "discount_type": st.column_config.SelectboxColumn(
+                    "Tipo Desc.",
+                    options=["none", "percentage", "fixed"],
+                    width="small"
+                ),
+                "discount_value": st.column_config.NumberColumn("Valor Desc.", format="%.2f"),
+                "discount_amount": st.column_config.NumberColumn("Desc. ($)", disabled=True, format="%.2f"),
+                "subtotal": st.column_config.NumberColumn("Subtotal ($)", disabled=True, format="%.2f"),
+                "final_price": st.column_config.NumberColumn("Precio Final ($)", disabled=True, format="%.2f")
             },
             hide_index=True,
             use_container_width=True,
             num_rows="dynamic"
         )
         st.session_state.quote_products = edited.to_dict('records')
-        totals = QuotationGenerator.calculate_quote(st.session_state.quote_products)
 
+        # Charge toggles
+        st.markdown("### ⚙️ Incluir Cargos Adicionales")
+        cols = st.columns(5)
+        charges = st.session_state.included_charges
+        charges['supervision'] = cols[0].checkbox("Supervisión\n(10%)", value=charges['supervision'])
+        charges['admin'] = cols[1].checkbox("Admin.\n(4%)", value=charges['admin'])
+        charges['insurance'] = cols[2].checkbox("Seguro\n(1%)", value=charges['insurance'])
+        charges['transport'] = cols[3].checkbox("Transporte\n(3%)", value=charges['transport'])
+        charges['contingency'] = cols[4].checkbox("Imprevisto\n(3%)", value=charges['contingency'])
+
+        totals = calculate_quote(st.session_state.quote_products, charges)
+
+        # Metrics
         st.markdown("### 💰 Resumen de Costos")
-        col1, col2, col3 = st.columns(3)
-        with col1:
+        c1, c2, c3 = st.columns(3)
+        with c1:
             st.metric("Total Items", f"${totals['items_total']:,.2f}")
-            st.metric("Supervisión (10%)", f"${totals['supervision']:,.2f}")
-            st.metric("Admin. (4%)", f"${totals['admin']:,.2f}")
-        with col2:
-            st.metric("Seguro (1%)", f"${totals['insurance']:,.2f}")
-            st.metric("Transporte (3%)", f"${totals['transport']:,.2f}")
-            st.metric("Imprevisto (3%)", f"${totals['contingency']:,.2f}")
-        with col3:
+            if totals.get('total_discounts', 0) > 0:
+                st.metric("Descuentos", f"-${totals['total_discounts']:,.2f}", delta=f"-{(totals['total_discounts']/totals['items_total']*100):.1f}%", delta_color="inverse")
+                st.metric("Después de Desc.", f"${totals['items_after_discount']:,.2f}")
+            if charges['supervision']:
+                st.metric("Supervisión (10%)", f"${totals['supervision']:,.2f}")
+            if charges['admin']:
+                st.metric("Admin. (4%)", f"${totals['admin']:,.2f}")
+        with c2:
+            if charges['insurance']:
+                st.metric("Seguro (1%)", f"${totals['insurance']:,.2f}")
+            if charges['transport']:
+                st.metric("Transporte (3%)", f"${totals['transport']:,.2f}")
+            if charges['contingency']:
+                st.metric("Imprevisto (3%)", f"${totals['contingency']:,.2f}")
+        with c3:
             st.metric("Subtotal", f"${totals['subtotal_general']:,.2f}")
             st.metric("ITBIS (18%)", f"${totals['itbis']:,.2f}")
             st.markdown(f"""
-            <div style="
-                background: rgba(18, 18, 36, 0.7);
-                padding: 1rem;
-                border-radius: 16px;
-                text-align: center;
-                border: 1px solid rgba(100, 180, 255, 0.2);
-                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-            ">
-                <div style="font-size: 20px; font-weight: 600; color: #4deeea; font-family: 'Inter', sans-serif;">
-                    TOTAL GENERAL
-                </div>
-                <div style="font-size: 36px; font-weight: 700; color: white; font-family: 'Inter', sans-serif;">
-                    ${totals['grand_total']:,.2f}
-                </div>
+            <div style="background:rgba(18,18,36,0.7); padding:1rem; border-radius:16px; text-align:center; border:1px solid rgba(100,180,255,0.2);">
+                <div style="font-size:20px; font-weight:600; color:#4deeea;">TOTAL GENERAL</div>
+                <div style="font-size:36px; font-weight:700; color:white;">${totals['grand_total']:,.2f}</div>
             </div>
             """, unsafe_allow_html=True)
 
+        # Save and Clear buttons
         col1, col2 = st.columns(2)
         with col1:
-            show_products_in_pdf = st.checkbox("Mostrar productos en PDF", value=True)
+            save_button_text = "💾 Actualizar Cotización" if editing_mode else "💾 Guardar Cotización"
+            if st.button(save_button_text, type="primary", use_container_width=True):
+                if st.session_state.current_client_id and client_name.strip():
+                    if editing_mode:
+                        # Update existing quote
+                        with get_db_connection() as conn:
+                            cur = conn.cursor()
+                            # Update quote
+                            charges_str = str(charges)
+                            cur.execute("""
+                                UPDATE quotes 
+                                SET project_name = ?, notes = ?, total_amount = ?, included_charges = ?
+                                WHERE quote_id = ?
+                            """, (project_name, notes, totals['grand_total'], charges_str, st.session_state.editing_quote_id))
+                            
+                            # Delete old items
+                            cur.execute("DELETE FROM quote_items WHERE quote_id = ?", (st.session_state.editing_quote_id,))
+                            
+                            # Insert new items
+                            for item in st.session_state.quote_products:
+                                cur.execute("""
+                                    INSERT INTO quote_items (quote_id, product_name, quantity, unit_price, discount_type, discount_value, auto_imported)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                                """, (st.session_state.editing_quote_id, item["product_name"], item["quantity"], 
+                                      item["unit_price"], item.get("discount_type", "none"), 
+                                      item.get("discount_value", 0), int(item.get("auto_imported", False))))
+                            conn.commit()
+                        
+                        st.success(f"✅ Cotización {st.session_state.editing_quote_id} actualizada exitosamente")
+                        st.session_state.editing_quote_id = None
+                        st.session_state.editing_quote_data = None
+                        st.session_state.quote_products = []
+                        st.rerun()
+                    else:
+                        # Create new quote
+                        quote_id = save_quote_to_db(
+                            st.session_state.current_client_id,
+                            project_name,
+                            st.session_state.quote_products,
+                            totals['grand_total'],
+                            notes,
+                            charges,
+                            status="Draft"
+                        )
+                        st.success(f"✅ Cotización guardada: {quote_id}")
+                        st.session_state.quote_products = []
+                        st.rerun()
+                else:
+                    st.error("Seleccione un cliente y nombre de empresa.")
+        
         with col2:
-            include_sketch = st.checkbox("Incluir diagrama 2D", value=True)
-        with col3:
-            include_3d_sketch = st.checkbox("Incluir vista 3D", value=False)
+            if st.button("🔄 Limpiar Cotización", use_container_width=True):
+                st.session_state.quote_products = []
+                st.session_state.editing_quote_id = None
+                st.session_state.editing_quote_data = None
+                st.rerun()
 
-        if st.button("🟥GENERAR PDF", type="primary", use_container_width=True):
-            try:
-                company_info = {
-                    'company_name': company_name,
-                    'phone': phone,
-                    'email': email,
-                    'client': client_name or "Cliente No Especificado",
-                    'project': project_name or "Proyecto No Especificado",
-                    'validity': quote_validity,
-                    'quoted_by': quoted_by,
-                    'notes': notes
-                }
-                sketch = None
-                if include_sketch and 'full_calculation_result' in st.session_state:
-                    sketch = create_building_sketch({
-                        'length': largo,
-                        'width': ancho,
-                        'wall_height': alto_lateral,
-                        'roof_height': max(0.1, alto_techado - alto_lateral)
-                    })
-
-                sketch_3d = None
-                if include_3d_sketch and 'full_calculation_result' in st.session_state:
-                    sketch_3d = create_3d_building_sketch({
-                        'length': largo,
-                        'width': ancho,
-                        'wall_height': alto_lateral,
-                        'roof_height': max(0.1, alto_techado - alto_lateral)
-                    })
-
-                pdf = QuotationGenerator.generate_pdf(
-                    quote_data={},
-                    company_info=company_info,
-                    products=st.session_state.quote_products,
-                    totals=totals,
-                    show_products=show_products_in_pdf,
-                    create_building_sketch=sketch,
-                    create_building_sketch_3d=sketch_3d
-)
-                st.download_button(
-                    "⏬ Descargar Cotización PDF",
-                    pdf.getvalue(),
-                    f"cotizacion_{datetime.now().strftime('%Y%m%d')}.pdf",
-                    "application/pdf",
-                    use_container_width=True
-                )
-            except Exception as e:
-                st.error(f"Error generando PDF: {e}")
     else:
-        st.info("👆 Importe productos desde el cálculo o agréguelos manualmente para generar una cotización.")
+        st.info("👆 Agregue productos para crear una cotización.")
 
-    # SECTION 3: SAVE CALCULATION
-    st.markdown("""
-        <div class="header-container">
-            <h1 class="main-title">GUARDAR CÁLCULO</h1>
-            <p class="subtitle">ESTRUCTURA ➕ MATERIALES</p>
-        </div>
-        """, unsafe_allow_html=True)
-
+    # Manage Existing Quotes
+    st.markdown("### 📂 Cotizaciones Guardadas")
     if st.session_state.current_client_id:
-        with st.form("save_calc_form"):
-            project_save_name = st.text_input("Nombre del Proyecto", value=project_name or f"Nave {largo}x{ancho}")
-            total_amount = st.number_input("Monto Total (USD)", value=float(totals.get('grand_total', 0)) if 'totals' in locals() else 0.0, min_value=0.0)
-            save_notes = st.text_area("Notas", value=notes)
-            if st.form_submit_button("🟥 Guardar Cálculo en Base de Datos", type="primary", use_container_width=True):
-                try:
-                    calc_data = {
-                        "largo": largo,
-                        "ancho": ancho,
-                        "alto_lateral": alto_lateral,
-                        "alto_techado": alto_techado,
-                        "distancia_ejes": distancia,
-                        "acero_result": st.session_state.get('full_calculation_result', {}).to_dict() if 'full_calculation_result' in st.session_state else {}
-                    }
-                    calc_id = database.save_calculation(
-                        client_id=st.session_state.current_client_id,
-                        project_name=project_save_name,
-                        length=largo,
-                        width=ancho,
-                        lateral_height=alto_lateral,
-                        roof_height=alto_techado,
-                        materials_dict=calc_data,
-                        total_amount=total_amount
+        quotes = get_all_quotes_for_client(st.session_state.current_client_id)
+        
+        if quotes:
+            for q in quotes:
+                with st.expander(f"{q['quote_id']} - {q['project_name']} (${q['total_amount']:,.2f}) - {q['status']}"):
+                    st.write(f"**Fecha:** {q['date']}")
+                    items_rows = query_db(
+                        "SELECT product_name, quantity, unit_price FROM quote_items WHERE quote_id = ?",
+                        (q["quote_id"],),
+                        fetch_all=True
                     )
-                    st.success(f"✅ Cálculo guardado: {project_save_name}")
-                    st.balloons()
-                except Exception as e:
-                    st.error(f"❌ Error al guardar: {e}")
+                    items_df = pd.DataFrame([dict(row) for row in items_rows])
+                    if not items_df.empty:
+                        items_df['subtotal'] = items_df['quantity'] * items_df['unit_price']
+                        st.dataframe(items_df, use_container_width=True)
+                    
+                    quote_data, items_list = get_quote_by_id(q["quote_id"])
+                    client_data = get_client_by_id(st.session_state.current_client_id)
+                    try:
+                        included_charges = ast.literal_eval(quote_data["included_charges"])
+                    except:
+                        included_charges = {k: True for k in ['supervision','admin','insurance','transport','contingency']}
+                    totals = calculate_quote(items_list, included_charges)
+
+                    if q["status"] == "Draft":
+                        # Action buttons for draft quotes
+                        col1, col2, col3 = st.columns(3)
+                        
+                        # Edit button
+                        with col1:
+                            if st.button("✏️ Editar", key=f"edit_{q['quote_id']}", use_container_width=True):
+                                # Load quote data into editing mode
+                                st.session_state.editing_quote_id = q['quote_id']
+                                st.session_state.editing_quote_data = quote_data
+                                st.session_state.quote_products = items_list
+                                st.session_state.included_charges = included_charges
+                                st.rerun()
+                        
+                        # Download PDF
+                        with col2:
+                            pdf = QuotePDF()
+                            pdf.add_page()
+                            pdf.quote_info(quote_data, client_data)
+                            pdf.items_table(items_list)
+                            pdf.cost_summary(totals, included_charges)
+                            # Add notes section if notes exist
+                            if quote_data.get('notes'):
+                                pdf.notes_section(quote_data['notes'])
+                            pdf_bytes = bytes(pdf.output())
+                            
+                            st.download_button(
+                                "📄 PDF",
+                                pdf_bytes,
+                                f"{q['quote_id']}_cotizacion.pdf",
+                                "application/pdf",
+                                use_container_width=True,
+                                key=f"dl_quote_{q['quote_id']}"
+                            )
+
+                        # Convert to invoice
+                        with col3:
+                            if st.button("🖨️ Factura", key=f"inv_{q['quote_id']}", use_container_width=True):
+                                # Show confirmation dialog
+                                st.session_state.confirm_convert = q["quote_id"]
+                            
+                        # Confirmation dialog for convert
+                        if st.session_state.get('confirm_convert') == q["quote_id"]:
+                            st.warning(f"⚠️ ¿Convertir cotización {q['quote_id']} en factura?")
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                if st.button("✅ Sí, Convertir", key=f"confirm_{q['quote_id']}", use_container_width=True):
+                                    new_invoice_id = update_quote_status(q["quote_id"], "Invoiced")
+                                    st.success(f"✅ Convertido a factura: {new_invoice_id}")
+                                    del st.session_state.confirm_convert
+                                    st.rerun()
+                            with col_b:
+                                if st.button("❌ Cancelar", key=f"cancel_{q['quote_id']}", use_container_width=True):
+                                    del st.session_state.confirm_convert
+                                    st.rerun()
+                        
+                        # Delete button with confirmation
+                        st.markdown("---")
+                        if st.button(f"🗑️ Eliminar Cotización {q['quote_id']}", key=f"del_{q['quote_id']}", type="secondary"):
+                            st.session_state.confirm_delete_quote = q["quote_id"]
+                        
+                        # Confirmation dialog for delete
+                        if st.session_state.get('confirm_delete_quote') == q["quote_id"]:
+                            st.error(f"⚠️ ¿Está seguro que desea eliminar la cotización {q['quote_id']}? Esta acción no se puede deshacer.")
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                if st.button("✅ Sí, Eliminar", key=f"confirm_del_{q['quote_id']}", type="primary"):
+                                    delete_quote(q["quote_id"])
+                                    del st.session_state.confirm_delete_quote
+                                    st.success("Cotización eliminada exitosamente")
+                                    st.rerun()
+                            with col_b:
+                                if st.button("❌ Cancelar", key=f"cancel_del_{q['quote_id']}"):
+                                    del st.session_state.confirm_delete_quote
+                                    st.rerun()
+
+                    elif q["status"] == "Invoiced":
+                        # Download INVOICE PDF
+                        pdf = InvoicePDF()
+                        pdf.add_page()
+                        pdf.invoice_info(quote_data, client_data)
+                        pdf.items_table(items_list)
+                        pdf.cost_summary(totals, included_charges)
+                        # Add notes section if notes exist
+                        if quote_data.get('notes'):
+                            pdf.notes_section(quote_data['notes'])
+                        pdf_bytes = bytes(pdf.output())
+                        
+                        st.download_button(
+                            "📥 Descargar Factura PDF",
+                            pdf_bytes,
+                            f"{q['quote_id']}_factura.pdf",
+                            "application/pdf",
+                            use_container_width=True,
+                            key=f"dl_invoice_{q['quote_id']}"
+                        )
+                        st.success("✅ Factura lista para descargar")
+                        
+                        # Delete invoice with confirmation
+                        st.markdown("---")
+                        if st.button(f"🗑️ Eliminar Factura {q['quote_id']}", key=f"del_inv_{q['quote_id']}", type="secondary"):
+                            st.session_state.confirm_delete_invoice = q["quote_id"]
+                        
+                        # Confirmation dialog for delete invoice
+                        if st.session_state.get('confirm_delete_invoice') == q["quote_id"]:
+                            st.error(f"⚠️ ¿Está seguro que desea eliminar la factura {q['quote_id']}? Esta acción no se puede deshacer.")
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                if st.button("✅ Sí, Eliminar", key=f"confirm_del_inv_{q['quote_id']}", type="primary"):
+                                    delete_quote(q["quote_id"])
+                                    del st.session_state.confirm_delete_invoice
+                                    st.success("Factura eliminada exitosamente")
+                                    st.rerun()
+                            with col_b:
+                                if st.button("❌ Cancelar", key=f"cancel_del_inv_{q['quote_id']}"):
+                                    del st.session_state.confirm_delete_invoice
+                                    st.rerun()
+        else:
+            st.info("No hay cotizaciones guardadas para este cliente.")
     else:
-        st.error("❌ Seleccione un cliente en la barra lateral para guardar cálculos.")
+        st.info("Seleccione un cliente para ver sus cotizaciones.")
 
-    # FOOTER
-    st.markdown("""
-        <div class="footer">
-            <div class="footer-title">RIGC Industrial Calculator 2030</div>
-            <div>Sistema Avanzado con Gestión de Clientes</div>
-            <small>© 2030 | Versión Unificada</small>
-        </div>
-        """, unsafe_allow_html=True)
+# ----------------------------
+# APP ROUTER
+# ----------------------------
 
-# --- ROUTER ---
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+    st.session_state.attempts = 0
+    st.session_state.username = ""
+
 if st.session_state.authenticated:
     show_main_app()
 else:
