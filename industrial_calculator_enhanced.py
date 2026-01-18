@@ -6,6 +6,7 @@ import sqlite3
 import os
 from fpdf import FPDF
 import ast
+import json
 
 # ----------------------------
 # DATABASE SETUP (SQLite)
@@ -83,6 +84,27 @@ def init_db():
             cur.execute("ALTER TABLE quote_items ADD COLUMN discount_value REAL DEFAULT 0")
             conn.commit()
 
+        # NEW: quote_history table for immutable snapshots
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS quote_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                quote_id TEXT NOT NULL,
+                snapshot_date TEXT NOT NULL,
+                snapshot_data TEXT NOT NULL
+            )
+        """)
+
+        # Migration: Ensure all columns exist in case of partial table creation
+        try:
+            cur.execute("ALTER TABLE quote_history ADD COLUMN snapshot_date TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cur.execute("ALTER TABLE quote_history ADD COLUMN snapshot_data TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
         cur.execute("SELECT COUNT(*) FROM products")
         if cur.fetchone()[0] == 0:
             samples = [
@@ -99,7 +121,6 @@ def init_db():
 if not os.path.exists(DB_PATH):
     init_db()
 else:
-    # Run migration on existing database
     init_db()
 
 # ----------------------------
@@ -358,6 +379,64 @@ def create_sample_csv():
     df.to_csv(PRODUCTS_CSV_PATH, index=False)
     return df
 
+# --- NEW HELPER FUNCTIONS FOR QUOTE UPGRADES ---
+
+def save_quote_snapshot(quote_id, data_dict):
+    """Save a full snapshot of quote data for history (Feature #2)"""
+    timestamp = datetime.now().isoformat()
+    snapshot = {
+        "quote_id": quote_id,
+        "snapshot_date": timestamp,
+        "data": data_dict
+    }
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO quote_history (quote_id, snapshot_date, snapshot_data)
+            VALUES (?, ?, ?)
+        """, (quote_id, timestamp, json.dumps(snapshot, default=str)))
+        conn.commit()
+
+def get_quote_history(quote_id):
+    """Retrieve all historical snapshots for a quote (Feature #2)"""
+    rows = query_db(
+        "SELECT snapshot_data FROM quote_history WHERE quote_id = ? ORDER BY snapshot_date DESC",
+        (quote_id,),
+        fetch_all=True
+    )
+    return [json.loads(row[0]) for row in rows]
+
+def duplicate_quote(original_quote_id):
+    """Create a new draft quote copied from an existing one (Feature #1)"""
+    original_quote, items = get_quote_by_id(original_quote_id)
+    if not original_quote:
+        return None
+
+    # Parse included_charges safely
+    try:
+        included_charges = ast.literal_eval(original_quote["included_charges"])
+    except:
+        included_charges = {k: True for k in ['supervision','admin','insurance','transport','contingency']}
+
+    # Add internal note
+    notes = original_quote.get('notes', '')
+    if notes:
+        notes += f"\n\nCopied from {original_quote_id}"
+    else:
+        notes = f"Copied from {original_quote_id}"
+
+    # Save as new draft
+    new_quote_id = save_quote_to_db(
+        client_id=original_quote['client_id'],
+        project_name=original_quote.get('project_name', ''),
+        items=items,
+        total=original_quote['total_amount'],
+        notes=notes,
+        included_charges=included_charges,
+        status="Draft"
+    )
+    return new_quote_id
+
 # ----------------------------
 # QUOTATION LOGIC
 # ----------------------------
@@ -376,22 +455,17 @@ def calculate_item_discount(unit_price, quantity, discount_type, discount_value)
 def calculate_quote(products, included_charges):
     items_total = 0
     total_discounts = 0
-    
     for p in products:
         qty = float(p.get('quantity', 0))
         price = float(p.get('unit_price', 0))
         discount_type = p.get('discount_type', 'none')
         discount_value = float(p.get('discount_value', 0))
-        
         subtotal = qty * price
         discount = calculate_item_discount(price, qty, discount_type, discount_value)
-        
         items_total += subtotal
         total_discounts += discount
-    
     # Apply discounts first
     items_after_discount = items_total - total_discounts
-    
     supervision = items_after_discount * 0.10 if included_charges.get('supervision', True) else 0.0
     admin = items_after_discount * 0.04 if included_charges.get('admin', True) else 0.0
     insurance = items_after_discount * 0.01 if included_charges.get('insurance', True) else 0.0
@@ -400,7 +474,6 @@ def calculate_quote(products, included_charges):
     subtotal = items_after_discount + supervision + admin + insurance + transport + contingency
     itbis = subtotal * 0.18
     grand_total = subtotal + itbis
-    
     return {
         'items_total': items_total,
         'total_discounts': total_discounts,
@@ -421,22 +494,17 @@ def calculate_quote(products, included_charges):
 
 class QuotePDF(FPDF):
     """Modern Quote PDF Generator"""
-    
     def header(self):
         # Add a colored header bar
         self.set_fill_color(41, 128, 185)  # Modern blue
         self.rect(0, 0, 210, 40, 'F')
-        
         # Add logo if it exists
         if os.path.exists("logo.png"):
             self.image("logo.png", 10, 8, 25)  # x, y, width
-            logo_offset = 40
-        else:
-            logo_offset = 10
-        
+        logo_offset = 40 if os.path.exists("logo.png") else 10
         # Company address in white, font size 6
         self.set_text_color(255, 255, 255)
-        self.set_font("Helvetica", "", 4)  # <-- fixed font size
+        self.set_font("Helvetica", "", 4)
         self.set_xy(logo_offset, 12)
         address_lines = [
             "Parque Industrial",
@@ -447,13 +515,11 @@ class QuotePDF(FPDF):
             "RNC: 131-71683-2"
         ]
         for line in address_lines:
-            self.cell(0,2, line, 0, 1, "R")  # reduced line height to 4
-        
+            self.cell(0,2, line, 0, 1, "R")
         # Quote label – moved down to avoid overlap
         self.set_font("Helvetica", "B", 16)
-        self.set_xy(logo_offset, 28)  # adjusted Y position
+        self.set_xy(logo_offset, 28)
         self.cell(0, 8, "COTIZACION", 0, 1, "R")
-        
         # Reset text color
         self.set_text_color(0, 0, 0)
         self.ln(10)
@@ -468,71 +534,58 @@ class QuotePDF(FPDF):
 
     def quote_info(self, quote_data, client_data):
         # Two-column layout for quote info
-        self.set_font("Helvetica", "B", 11)
-        
-        # Left column - Quote details
         self.set_xy(10, 55)
         self.set_fill_color(240, 240, 240)
         self.cell(90, 8, "INFORMACION DE COTIZACION", 0, 1, "L", True)
-        
         self.set_font("Helvetica", "", 9)
         self.set_x(10)
         self.cell(40, 6, "Cotizacion #:", 0, 0, "L")
         self.set_font("Helvetica", "B", 9)
         self.cell(50, 6, quote_data['quote_id'], 0, 1, "L")
-        
         self.set_font("Helvetica", "", 9)
         self.set_x(10)
         self.cell(40, 6, "Fecha:", 0, 0, "L")
         self.set_font("Helvetica", "B", 9)
         self.cell(50, 6, quote_data['date'], 0, 1, "L")
-        
         self.set_font("Helvetica", "", 9)
         self.set_x(10)
         self.cell(40, 6, "Proyecto:", 0, 0, "L")
         self.set_font("Helvetica", "B", 9)
         self.cell(50, 6, quote_data.get('project_name', 'N/A'), 0, 1, "L")
-        
         # Right column - Client details
         self.set_xy(110, 55)
         self.set_font("Helvetica", "B", 11)
         self.set_fill_color(240, 240, 240)
         self.cell(90, 8, "CLIENTE", 0, 1, "L", True)
-        
         self.set_font("Helvetica", "", 9)
         self.set_x(110)
         self.cell(40, 6, "Empresa:", 0, 0, "L")
         self.set_font("Helvetica", "B", 9)
         self.multi_cell(50, 6, client_data['company_name'], 0, "L")
-        
         if client_data.get('contact_name'):
             self.set_font("Helvetica", "", 9)
             self.set_x(110)
             self.cell(40, 6, "Contacto:", 0, 0, "L")
             self.set_font("Helvetica", "B", 9)
             self.cell(50, 6, client_data['contact_name'], 0, 1, "L")
-        
         if client_data.get('tax_id'):
             self.set_font("Helvetica", "", 9)
             self.set_x(110)
             self.cell(40, 6, "RNC/Cedula:", 0, 0, "L")
             self.set_font("Helvetica", "B", 9)
             self.cell(50, 6, client_data['tax_id'], 0, 1, "L")
-        
         if client_data.get('email'):
             self.set_font("Helvetica", "", 9)
             self.set_x(110)
             self.cell(40, 6, "Email:", 0, 0, "L")
             self.set_font("Helvetica", "B", 9)
             self.cell(50, 6, client_data['email'], 0, 1, "L")
-        
         if client_data.get('phone'):
             self.set_font("Helvetica", "", 9)
             self.set_x(110)
             self.cell(40, 6, "Telefono:", 0, 0, "L")
             self.set_font("Helvetica", "B", 9)
             self.cell(50, 6, client_data['phone'], 0, 1, "L")
-        
         self.ln(10)
 
     def items_table(self, items_list):
@@ -540,29 +593,24 @@ class QuotePDF(FPDF):
         self.set_fill_color(52, 152, 219)
         self.set_text_color(255, 255, 255)
         self.set_font("Helvetica", "B", 10)
-        
         self.cell(90, 9, "DESCRIPCION", 1, 0, "L", True)
         self.cell(30, 9, "CANTIDAD", 1, 0, "C", True)
         self.cell(35, 9, "PRECIO UNIT.", 1, 0, "R", True)
         self.cell(35, 9, "TOTAL", 1, 1, "R", True)
-        
         # Reset text color
         self.set_text_color(0, 0, 0)
         self.set_font("Helvetica", "", 9)
-        
         # Alternating row colors
         fill = False
         for item in items_list:
             desc = self._clean_text(str(item["product_name"]))
             x = self.get_x()
             y = self.get_y()
-            
             # Set alternating background
             if fill:
                 self.set_fill_color(245, 245, 245)
             else:
                 self.set_fill_color(255, 255, 255)
-            
             # Description with word wrap
             if len(desc) > 50:
                 self.multi_cell(90, 6, desc, 1, "L", fill)
@@ -570,14 +618,11 @@ class QuotePDF(FPDF):
                 self.set_xy(x + 90, y)
             else:
                 self.cell(90, 6, desc, 1, 0, "L", fill)
-            
             self.cell(30, 6, f"{item['quantity']:,.2f}", 1, 0, "C", fill)
             self.cell(35, 6, f"${item['unit_price']:,.2f}", 1, 0, "R", fill)
             total = item["quantity"] * item["unit_price"]
             self.cell(35, 6, f"${total:,.2f}", 1, 1, "R", fill)
-            
             fill = not fill
-        
         self.ln(5)
 
     def cost_summary(self, totals, included_charges):
@@ -585,30 +630,24 @@ class QuotePDF(FPDF):
         start_y = self.get_y()
         self.set_draw_color(52, 152, 219)
         self.set_line_width(0.5)
-        
         self.set_font("Helvetica", "B", 10)
         self.set_fill_color(240, 248, 255)
         self.cell(0, 8, "RESUMEN FINANCIERO", 1, 1, "L", True)
-        
         self.set_font("Helvetica", "", 9)
         self.set_line_width(0.2)
-        
         # Items total
         self.cell(130, 6, "Subtotal de Items:", 1, 0, "L")
         self.cell(60, 6, f"${totals['items_total']:,.2f}", 1, 1, "R")
-        
         # Show discounts if any
         if totals.get('total_discounts', 0) > 0:
             self.set_text_color(220, 53, 69)  # Red for discounts
             self.cell(130, 6, "Descuentos Aplicados:", 1, 0, "L")
             self.cell(60, 6, f"-${totals['total_discounts']:,.2f}", 1, 1, "R")
             self.set_text_color(0, 0, 0)
-            
-            self.set_font("Helvetica", "B", 9)
-            self.cell(130, 6, "Total Despues de Descuentos:", 1, 0, "L")
-            self.cell(60, 6, f"${totals['items_after_discount']:,.2f}", 1, 1, "R")
-            self.set_font("Helvetica", "", 9)
-        
+        self.set_font("Helvetica", "B", 9)
+        self.cell(130, 6, "Total Despues de Descuentos:", 1, 0, "L")
+        self.cell(60, 6, f"${totals['items_after_discount']:,.2f}", 1, 1, "R")
+        self.set_font("Helvetica", "", 9)
         # Additional charges
         if included_charges.get('supervision'):
             self.cell(130, 6, "Supervision Tecnica (10%):", 1, 0, "L")
@@ -625,25 +664,21 @@ class QuotePDF(FPDF):
         if included_charges.get('contingency'):
             self.cell(130, 6, "Imprevisto (3%):", 1, 0, "L")
             self.cell(60, 6, f"${totals['contingency']:,.2f}", 1, 1, "R")
-        
         # Subtotal
         self.set_font("Helvetica", "B", 10)
         self.set_fill_color(230, 240, 250)
         self.cell(130, 7, "SUBTOTAL GENERAL:", 1, 0, "L", True)
         self.cell(60, 7, f"${totals['subtotal_general']:,.2f}", 1, 1, "R", True)
-        
         # Tax
         self.set_font("Helvetica", "", 9)
         self.cell(130, 6, "ITBIS (18%):", 1, 0, "L")
         self.cell(60, 6, f"${totals['itbis']:,.2f}", 1, 1, "R")
-        
         # Grand total with highlight
         self.set_font("Helvetica", "B", 12)
         self.set_fill_color(52, 152, 219)
         self.set_text_color(255, 255, 255)
         self.cell(130, 10, "TOTAL GENERAL:", 1, 0, "L", True)
         self.cell(60, 10, f"${totals['grand_total']:,.2f}", 1, 1, "R", True)
-        
         # Reset colors
         self.set_text_color(0, 0, 0)
         self.set_line_width(0.2)
@@ -669,25 +704,19 @@ class QuotePDF(FPDF):
             text = text.replace(old, new)
         return text.encode('latin1', errors='replace').decode('latin1')
 
-
 class InvoicePDF(FPDF):
     """Modern Invoice PDF Generator"""
-    
     def header(self):
         # Add a colored header bar - different color for invoices
         self.set_fill_color(231, 76, 60)  # Red/Orange for invoice
         self.rect(0, 0, 210, 40, 'F')
-        
         # Add logo if it exists
         if os.path.exists("logo.png"):
             self.image("logo.png", 10, 8, 25)  # x, y, width
-            logo_offset = 40
-        else:
-            logo_offset = 10
-        
+        logo_offset = 40 if os.path.exists("logo.png") else 10
         # Company address in white, font size 6
         self.set_text_color(255, 255, 255)
-        self.set_font("Helvetica", "", 4)  # <-- fixed font size
+        self.set_font("Helvetica", "", 4)
         self.set_xy(logo_offset, 12)
         address_lines = [
             "Parque Industrial",
@@ -698,13 +727,11 @@ class InvoicePDF(FPDF):
             "RNC: 131-71683-2"
         ]
         for line in address_lines:
-            self.cell(0,2, line, 0, 1, "R")  # reduced line height to 4
-        
+            self.cell(0,2, line, 0, 1, "R")
         # Invoice label – moved down to avoid overlap
         self.set_font("Helvetica", "B", 16)
-        self.set_xy(logo_offset, 28)  # adjusted Y position
+        self.set_xy(logo_offset, 28)
         self.cell(0, 8, "FACTURA", 0, 1, "R")
-        
         # Reset text color
         self.set_text_color(0, 0, 0)
         self.ln(10)
@@ -719,78 +746,64 @@ class InvoicePDF(FPDF):
 
     def invoice_info(self, quote_data, client_data):
         # Two-column layout for invoice info
-        self.set_font("Helvetica", "B", 11)
-        
-        # Left column - Invoice details
         self.set_xy(10, 55)
         self.set_fill_color(255, 240, 240)
         self.cell(90, 8, "INFORMACION DE FACTURA", 0, 1, "L", True)
-        
         self.set_font("Helvetica", "", 9)
         self.set_x(10)
         self.cell(40, 6, "Factura #:", 0, 0, "L")
         self.set_font("Helvetica", "B", 9)
         self.cell(50, 6, quote_data['quote_id'], 0, 1, "L")
-        
         self.set_font("Helvetica", "", 9)
         self.set_x(10)
         self.cell(40, 6, "Fecha Emision:", 0, 0, "L")
         self.set_font("Helvetica", "B", 9)
         self.cell(50, 6, quote_data['date'], 0, 1, "L")
-        
         self.set_font("Helvetica", "", 9)
         self.set_x(10)
         self.cell(40, 6, "Proyecto:", 0, 0, "L")
         self.set_font("Helvetica", "B", 9)
         self.cell(50, 6, quote_data.get('project_name', 'N/A'), 0, 1, "L")
-        
         # Payment terms
         self.set_font("Helvetica", "", 9)
         self.set_x(10)
         self.cell(40, 6, "Terminos:", 0, 0, "L")
         self.set_font("Helvetica", "B", 9)
         self.cell(50, 6, "Net 30", 0, 1, "L")
-        
         # Right column - Client details
         self.set_xy(110, 55)
         self.set_font("Helvetica", "B", 11)
         self.set_fill_color(255, 240, 240)
         self.cell(90, 8, "FACTURAR A", 0, 1, "L", True)
-        
         self.set_font("Helvetica", "", 9)
         self.set_x(110)
         self.cell(40, 6, "Empresa:", 0, 0, "L")
         self.set_font("Helvetica", "B", 9)
         self.multi_cell(50, 6, client_data['company_name'], 0, "L")
-        
         if client_data.get('contact_name'):
             self.set_font("Helvetica", "", 9)
             self.set_x(110)
             self.cell(40, 6, "Contacto:", 0, 0, "L")
             self.set_font("Helvetica", "B", 9)
             self.cell(50, 6, client_data['contact_name'], 0, 1, "L")
-        
         if client_data.get('tax_id'):
             self.set_font("Helvetica", "", 9)
             self.set_x(110)
             self.cell(40, 6, "RNC/Cedula:", 0, 0, "L")
             self.set_font("Helvetica", "B", 9)
             self.cell(50, 6, client_data['tax_id'], 0, 1, "L")
-        
         if client_data.get('email'):
             self.set_font("Helvetica", "", 9)
             self.set_x(110)
             self.cell(40, 6, "Email:", 0, 0, "L")
             self.set_font("Helvetica", "B", 9)
             self.cell(50, 6, client_data['email'], 0, 1, "L")
-        
         if client_data.get('phone'):
             self.set_font("Helvetica", "", 9)
             self.set_x(110)
             self.cell(40, 6, "Telefono:", 0, 0, "L")
             self.set_font("Helvetica", "B", 9)
             self.cell(50, 6, client_data['phone'], 0, 1, "L")
-        
         self.ln(10)
 
     def items_table(self, items_list):
@@ -798,29 +811,24 @@ class InvoicePDF(FPDF):
         self.set_fill_color(231, 76, 60)
         self.set_text_color(255, 255, 255)
         self.set_font("Helvetica", "B", 10)
-        
         self.cell(90, 9, "DESCRIPCION", 1, 0, "L", True)
         self.cell(30, 9, "CANTIDAD", 1, 0, "C", True)
         self.cell(35, 9, "PRECIO UNIT.", 1, 0, "R", True)
         self.cell(35, 9, "TOTAL", 1, 1, "R", True)
-        
         # Reset text color
         self.set_text_color(0, 0, 0)
         self.set_font("Helvetica", "", 9)
-        
         # Alternating row colors
         fill = False
         for item in items_list:
             desc = self._clean_text(str(item["product_name"]))
             x = self.get_x()
             y = self.get_y()
-            
             # Set alternating background
             if fill:
                 self.set_fill_color(245, 245, 245)
             else:
                 self.set_fill_color(255, 255, 255)
-            
             # Description with word wrap
             if len(desc) > 50:
                 self.multi_cell(90, 6, desc, 1, "L", fill)
@@ -828,14 +836,11 @@ class InvoicePDF(FPDF):
                 self.set_xy(x + 90, y)
             else:
                 self.cell(90, 6, desc, 1, 0, "L", fill)
-            
             self.cell(30, 6, f"{item['quantity']:,.2f}", 1, 0, "C", fill)
             self.cell(35, 6, f"${item['unit_price']:,.2f}", 1, 0, "R", fill)
             total = item["quantity"] * item["unit_price"]
             self.cell(35, 6, f"${total:,.2f}", 1, 1, "R", fill)
-            
             fill = not fill
-        
         self.ln(5)
 
     def cost_summary(self, totals, included_charges):
@@ -843,30 +848,24 @@ class InvoicePDF(FPDF):
         start_y = self.get_y()
         self.set_draw_color(231, 76, 60)
         self.set_line_width(0.5)
-        
         self.set_font("Helvetica", "B", 10)
         self.set_fill_color(255, 245, 245)
         self.cell(0, 8, "RESUMEN DE PAGO", 1, 1, "L", True)
-        
         self.set_font("Helvetica", "", 9)
         self.set_line_width(0.2)
-        
         # Items total
         self.cell(130, 6, "Subtotal de Items:", 1, 0, "L")
         self.cell(60, 6, f"${totals['items_total']:,.2f}", 1, 1, "R")
-        
         # Show discounts if any
         if totals.get('total_discounts', 0) > 0:
             self.set_text_color(220, 53, 69)  # Red for discounts
             self.cell(130, 6, "Descuentos Aplicados:", 1, 0, "L")
             self.cell(60, 6, f"-${totals['total_discounts']:,.2f}", 1, 1, "R")
             self.set_text_color(0, 0, 0)
-            
-            self.set_font("Helvetica", "B", 9)
-            self.cell(130, 6, "Total Despues de Descuentos:", 1, 0, "L")
-            self.cell(60, 6, f"${totals['items_after_discount']:,.2f}", 1, 1, "R")
-            self.set_font("Helvetica", "", 9)
-        
+        self.set_font("Helvetica", "B", 9)
+        self.cell(130, 6, "Total Despues de Descuentos:", 1, 0, "L")
+        self.cell(60, 6, f"${totals['items_after_discount']:,.2f}", 1, 1, "R")
+        self.set_font("Helvetica", "", 9)
         # Additional charges
         if included_charges.get('supervision'):
             self.cell(130, 6, "Supervision Tecnica (10%):", 1, 0, "L")
@@ -883,29 +882,24 @@ class InvoicePDF(FPDF):
         if included_charges.get('contingency'):
             self.cell(130, 6, "Imprevisto (3%):", 1, 0, "L")
             self.cell(60, 6, f"${totals['contingency']:,.2f}", 1, 1, "R")
-        
         # Subtotal
         self.set_font("Helvetica", "B", 10)
         self.set_fill_color(255, 235, 235)
         self.cell(130, 7, "SUBTOTAL GENERAL:", 1, 0, "L", True)
         self.cell(60, 7, f"${totals['subtotal_general']:,.2f}", 1, 1, "R", True)
-        
         # Tax
         self.set_font("Helvetica", "", 9)
         self.cell(130, 6, "ITBIS (18%):", 1, 0, "L")
         self.cell(60, 6, f"${totals['itbis']:,.2f}", 1, 1, "R")
-        
         # Grand total with highlight
         self.set_font("Helvetica", "B", 12)
         self.set_fill_color(231, 76, 60)
         self.set_text_color(255, 255, 255)
         self.cell(130, 10, "TOTAL A PAGAR:", 1, 0, "L", True)
         self.cell(60, 10, f"${totals['grand_total']:,.2f}", 1, 1, "R", True)
-        
         # Reset colors
         self.set_text_color(0, 0, 0)
         self.set_line_width(0.2)
-        
         # Payment instructions
         self.ln(5)
         self.set_font("Helvetica", "I", 8)
@@ -943,25 +937,25 @@ USER_PASSCODES = {"fabian": "rams20", "admin": "admin123"}
 def show_login_page():
     st.markdown("""
     <style>
-        html, body, [data-testid="stAppViewContainer"] {
-            height: 100vh; background: radial-gradient(circle at top, #0f0f19 0%, #050510 100%);
-        }
-        .login-title { font-size: 40px; font-weight: 800; text-align: center;
-            background: linear-gradient(135deg, #00ffff, #0099ff, #ff00ff);
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.5rem;
-        }
-        .login-subtitle { text-align: center; color: rgba(255,255,255,0.6); font-size: 14px; letter-spacing: 1.5px; margin-bottom: 2rem; }
+    html, body, [data-testid="stAppViewContainer"] {
+        height: 100vh; background: radial-gradient(circle at top, #0f0f19 0%, #050510 100%);
+    }
+    .login-title { 
+        font-size: 40px; font-weight: 800; text-align: center;
+        background: linear-gradient(135deg, #00ffff, #0099ff, #ff00ff);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.5rem;
+    }
+    .login-subtitle { 
+        text-align: center; color: rgba(255,255,255,0.6); font-size: 14px; letter-spacing: 1.5px; margin-bottom: 2rem; 
+    }
     </style>
     """, unsafe_allow_html=True)
-
     st.markdown('<div style="text-align:center; font-size:72px; margin:2rem 0;">🏗️</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-title">RIGC 2030</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-subtitle">SISTEMA DE CÁLCULO INDUSTRIAL</div>', unsafe_allow_html=True)
-
     if st.session_state.attempts >= MAX_ATTEMPTS:
         st.error("⚠️ Máximo de intentos alcanzado. Contacte al administrador.")
         return
-
     with st.form("login_form"):
         username = st.text_input("👤 Usuario")
         password = st.text_input("🔒 Contraseña", type="password")
@@ -1002,6 +996,14 @@ def show_main_app():
         'editing_product_id': None,
         'editing_quote_id': None,
         'editing_quote_data': None,
+        # NEW: for search, filters, and history
+        'viewing_history_for': None,
+        'global_search_query': "",
+        'filter_date_from': None,
+        'filter_date_to': None,
+        'filter_status': "All",
+        'filter_amount_min': None,
+        'filter_amount_max': None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -1010,7 +1012,6 @@ def show_main_app():
     # Sidebar
     st.sidebar.header("👥 Gestión de Clientes")
     mode = st.sidebar.radio("Modo:", ["Seleccionar Cliente", "Nuevo Cliente"])
-    
     if mode == "Seleccionar Cliente":
         clients = get_all_clients()
         if len(clients) == 0:
@@ -1041,11 +1042,9 @@ def show_main_app():
                     st.sidebar.error("Empresa requerida.")
 
     st.sidebar.markdown("---")
-    
     # Product Management Toggle
     if st.sidebar.button("📦 Gestión de Productos", use_container_width=True):
         st.session_state.show_product_manager = not st.session_state.show_product_manager
-    
     if st.sidebar.button("🟥 Cerrar Sesión"):
         st.session_state.clear()
         st.rerun()
@@ -1058,13 +1057,10 @@ def show_main_app():
     if st.session_state.show_product_manager:
         st.markdown("---")
         st.markdown("## 📦 Gestión de Productos")
-        
         tab1, tab2, tab3 = st.tabs(["📋 Lista de Productos", "📁 Sincronizar desde CSV", "➕ Agregar/Editar Producto"])
-        
         with tab1:
             products = get_products_for_dropdown()
             if products:
-                # Display products in a table
                 products_df = pd.DataFrame(products)
                 products_df = products_df.rename(columns={
                     'id': 'ID',
@@ -1072,22 +1068,15 @@ def show_main_app():
                     'description': 'Descripción',
                     'unit_price': 'Precio Unitario'
                 })
-                
                 st.dataframe(
                     products_df,
                     column_config={
-                        "Precio Unitario": st.column_config.NumberColumn(
-                            "Precio Unitario",
-                            format="$%.2f"
-                        )
+                        "Precio Unitario": st.column_config.NumberColumn("Precio Unitario", format="$%.2f")
                     },
                     hide_index=True,
                     use_container_width=True
                 )
-                
                 st.info(f"📊 Total de productos: {len(products)}")
-                
-                # Edit/Delete buttons
                 st.markdown("#### Acciones")
                 col1, col2 = st.columns([3, 1])
                 with col1:
@@ -1100,16 +1089,12 @@ def show_main_app():
                     if st.button("✏️ Editar", use_container_width=True):
                         st.session_state.editing_product_id = product_to_edit
                         st.rerun()
-                
-                # Delete with confirmation
                 if st.button("🗑️ Eliminar Producto Seleccionado", type="secondary"):
                     st.session_state.confirm_delete_product = product_to_edit
-                
-                # Confirmation dialog for delete
                 if 'confirm_delete_product' in st.session_state:
                     product = next(p for p in products if p['id'] == st.session_state.confirm_delete_product)
                     st.warning(f"⚠️ ¿Está seguro que desea eliminar '{product['name']}'?")
-                    col1, col2, col3 = st.columns([1, 1, 2])
+                    col1, col2 = st.columns(2)
                     with col1:
                         if st.button("✅ Sí, Eliminar", type="primary"):
                             delete_product(st.session_state.confirm_delete_product)
@@ -1122,23 +1107,16 @@ def show_main_app():
                             st.rerun()
             else:
                 st.info("No hay productos en el catálogo. Agregue uno en la pestaña siguiente.")
-        
         with tab2:
             st.markdown("### 📁 Cargar Productos desde CSV")
-            
-            # Info box
             st.info("""
             **Formato del CSV:**
             - Columnas requeridas: `name`, `unit_price`
             - Columna opcional: `description`
             - El archivo debe llamarse `products.csv` o puede subirlo manualmente
             """)
-            
-            # Check if products.csv exists
             if os.path.exists(PRODUCTS_CSV_PATH):
                 st.success(f"✅ Archivo encontrado: `{PRODUCTS_CSV_PATH}`")
-                
-                # Preview CSV
                 try:
                     preview_df = pd.read_csv(PRODUCTS_CSV_PATH)
                     st.markdown("#### Vista Previa del CSV")
@@ -1146,8 +1124,6 @@ def show_main_app():
                     st.caption(f"Mostrando {min(10, len(preview_df))} de {len(preview_df)} productos")
                 except Exception as e:
                     st.error(f"Error leyendo CSV: {str(e)}")
-                
-                # Sync button
                 if st.button("🔄 Sincronizar Productos desde CSV", type="primary", use_container_width=True):
                     result, message = sync_products_from_csv()
                     if result:
@@ -1161,19 +1137,14 @@ def show_main_app():
                         st.error(message)
             else:
                 st.warning(f"⚠️ No se encontró `{PRODUCTS_CSV_PATH}`")
-                
                 col1, col2 = st.columns(2)
-                
                 with col1:
-                    # Create sample CSV
                     if st.button("📄 Crear CSV de Ejemplo", use_container_width=True):
                         sample_df = create_sample_csv()
                         st.success(f"✅ Creado: `{PRODUCTS_CSV_PATH}`")
                         st.dataframe(sample_df, use_container_width=True)
                         st.rerun()
-                
                 with col2:
-                    # Download template
                     template_csv = "name,description,unit_price\nProducto Ejemplo,Descripción del producto,100.00\n"
                     st.download_button(
                         "📥 Descargar Plantilla CSV",
@@ -1182,30 +1153,16 @@ def show_main_app():
                         "text/csv",
                         use_container_width=True
                     )
-            
             st.markdown("---")
-            
-            # Manual CSV upload
             st.markdown("#### 📤 Subir CSV Manualmente")
-            uploaded_file = st.file_uploader(
-                "Seleccione archivo CSV",
-                type=['csv'],
-                help="Formato: name, description, unit_price"
-            )
-            
+            uploaded_file = st.file_uploader("Seleccione archivo CSV", type=['csv'])
             if uploaded_file is not None:
                 try:
-                    # Save uploaded file
                     with open(PRODUCTS_CSV_PATH, 'wb') as f:
                         f.write(uploaded_file.getbuffer())
-                    
                     st.success(f"✅ Archivo guardado como `{PRODUCTS_CSV_PATH}`")
-                    
-                    # Preview
                     preview_df = pd.read_csv(PRODUCTS_CSV_PATH)
                     st.dataframe(preview_df.head(10), use_container_width=True)
-                    
-                    # Auto-sync option
                     if st.button("🔄 Sincronizar Ahora", type="primary"):
                         result, message = sync_products_from_csv()
                         if result:
@@ -1213,21 +1170,16 @@ def show_main_app():
                             st.rerun()
                         else:
                             st.error(message)
-                            
                 except Exception as e:
                     st.error(f"Error procesando archivo: {str(e)}")
-            
-            # Export current products to CSV
             st.markdown("---")
             st.markdown("#### 📥 Exportar Productos Actuales")
-            
             if st.button("💾 Exportar a CSV", use_container_width=True):
                 products = get_products_for_dropdown()
                 if products:
                     export_df = pd.DataFrame(products)
                     export_df = export_df[['name', 'description', 'unit_price']]
                     csv_data = export_df.to_csv(index=False)
-                    
                     st.download_button(
                         "📥 Descargar products.csv",
                         csv_data,
@@ -1238,56 +1190,29 @@ def show_main_app():
                     st.success(f"✅ {len(products)} productos listos para descargar")
                 else:
                     st.warning("No hay productos para exportar")
-        
         with tab3:
-            # Check if editing
             editing_product = None
             if st.session_state.editing_product_id:
                 products = get_products_for_dropdown()
                 editing_product = next((p for p in products if p['id'] == st.session_state.editing_product_id), None)
-            
             with st.form("product_form"):
                 st.markdown(f"#### {'✏️ Editar Producto' if editing_product else '➕ Nuevo Producto'}")
-                
-                name = st.text_input(
-                    "Nombre del Producto *",
-                    value=editing_product['name'] if editing_product else ""
-                )
-                description = st.text_area(
-                    "Descripción",
-                    value=editing_product['description'] if editing_product else ""
-                )
-                unit_price = st.number_input(
-                    "Precio Unitario ($) *",
-                    min_value=0.01,
-                    step=0.01,
-                    value=float(editing_product['unit_price']) if editing_product else 1.00
-                )
-                
+                name = st.text_input("Nombre del Producto *", value=editing_product['name'] if editing_product else "")
+                description = st.text_area("Descripción", value=editing_product['description'] if editing_product else "")
+                unit_price = st.number_input("Precio Unitario ($)", min_value=0.01, step=0.01, value=float(editing_product['unit_price']) if editing_product else 1.00)
                 col1, col2 = st.columns(2)
                 with col1:
-                    submit = st.form_submit_button(
-                        "💾 Actualizar Producto" if editing_product else "➕ Agregar Producto",
-                        use_container_width=True,
-                        type="primary"
-                    )
+                    submit = st.form_submit_button("💾 Actualizar Producto" if editing_product else "➕ Agregar Producto", use_container_width=True, type="primary")
                 with col2:
                     if editing_product:
                         cancel = st.form_submit_button("❌ Cancelar", use_container_width=True)
                         if cancel:
                             st.session_state.editing_product_id = None
                             st.rerun()
-                
                 if submit:
                     if name and unit_price > 0:
                         if editing_product:
-                            # Update existing product
-                            success = update_product(
-                                editing_product['id'],
-                                name,
-                                description,
-                                unit_price
-                            )
+                            success = update_product(editing_product['id'], name, description, unit_price)
                             if success:
                                 st.success(f"✅ Producto '{name}' actualizado exitosamente")
                                 st.session_state.editing_product_id = None
@@ -1295,7 +1220,6 @@ def show_main_app():
                             else:
                                 st.error("❌ Error: Ya existe un producto con ese nombre")
                         else:
-                            # Add new product
                             result = add_product(name, description, unit_price)
                             if result:
                                 st.success(f"✅ Producto '{name}' agregado exitosamente")
@@ -1304,36 +1228,31 @@ def show_main_app():
                                 st.error("❌ Error: Ya existe un producto con ese nombre")
                     else:
                         st.error("❌ Complete todos los campos requeridos (*)")
-        
         st.markdown("---")
-        return  # Don't show quote form when in product manager
+        return
 
     if st.session_state.current_client_id:
         client = get_client_by_id(st.session_state.current_client_id)
-        # Display client info in a nice card
         st.markdown(f"""
         <div style="background:rgba(41,128,185,0.1); padding:1rem; border-radius:8px; border-left:4px solid #2980b9;">
-            <div style="font-size:18px; font-weight:600; color:#2980b9; margin-bottom:0.5rem;">
-                👤 Cliente Activo
-            </div>
-            <div style="font-size:16px; font-weight:500; margin-bottom:0.3rem;">
-                {client['company_name']}
-            </div>
-            <div style="font-size:14px; color:#a3a3a3;">
-                {'📞 ' + client.get('contact_name', 'Sin contacto') if client.get('contact_name') else '📞 Sin contacto'}
-                {' | 🆔 RNC/Cédula: ' + client.get('tax_id', 'N/A') if client.get('tax_id') else ''}
-            </div>
+        <div style="font-size:18px; font-weight:600; color:#2980b9; margin-bottom:0.5rem;">
+        👤 Cliente Activo
+        </div>
+        <div style="font-size:16px; font-weight:500; margin-bottom:0.3rem;">
+        {client['company_name']}
+        </div>
+        <div style="font-size:14px; color:#a3a3a3;">
+        {'📞 ' + client.get('contact_name', 'Sin contacto') if client.get('contact_name') else '📞 Sin contacto'}
+        {' | 🆔 RNC/Cédula: ' + client.get('tax_id', 'N/A') if client.get('tax_id') else ''}
+        </div>
         </div>
         """, unsafe_allow_html=True)
     else:
         st.warning("⚠️ Seleccione o cree un cliente en la barra lateral.")
-
     st.divider()
 
     # Quotation Form
     st.markdown("### 📝 Información de la Cotización")
-    
-    # Check if we're editing a quote
     editing_mode = st.session_state.editing_quote_id is not None
     if editing_mode:
         st.info(f"✏️ **Modo Edición**: Editando cotización {st.session_state.editing_quote_id}")
@@ -1342,7 +1261,6 @@ def show_main_app():
             st.session_state.editing_quote_data = None
             st.session_state.quote_products = []
             st.rerun()
-    
     col1, col2, col3 = st.columns(3)
     with col1:
         company_name_info = st.text_input("Nombre de Empresa", value="RIGC INDUSTRIAL", key="company_info")
@@ -1352,7 +1270,6 @@ def show_main_app():
         quoted_by = st.text_input("Cotizado por", value=st.session_state.username)
     with col3:
         validity = st.number_input("Validez (días)", value=30, min_value=1)
-
     col1, col2 = st.columns(2)
     with col1:
         if st.session_state.current_client_id:
@@ -1361,11 +1278,8 @@ def show_main_app():
         else:
             client_name = st.text_input("Nombre del Cliente", placeholder="Nombre del cliente", key="client_name_input")
     with col2:
-        # Pre-fill project name if editing
         default_project = st.session_state.editing_quote_data.get('project_name', '') if st.session_state.editing_quote_data else ''
         project_name = st.text_input("Proyecto", placeholder="Nombre del proyecto", value=default_project)
-
-    # Pre-fill notes if editing
     default_notes = st.session_state.editing_quote_data.get('notes', '') if st.session_state.editing_quote_data else ''
     notes = st.text_area("Notas adicionales", placeholder="Condiciones especiales...", value=default_notes)
 
@@ -1386,22 +1300,20 @@ def show_main_app():
             qty = st.number_input("Cantidad", min_value=0.0, step=1.0, key="db_qty")
         with col2:
             add_discount = st.checkbox("Agregar Descuento", key="db_discount_check")
-        
-        if add_discount:
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
-                discount_type_db = st.selectbox("Tipo", ["percentage", "fixed"], 
-                                            format_func=lambda x: {"percentage": "Porcentaje (%)", "fixed": "Monto Fijo ($)"}[x],
-                                            key="db_disc_type")
-            with col_d2:
-                if discount_type_db == "percentage":
-                    discount_value_db = st.number_input("Descuento (%)", min_value=0.0, max_value=100.0, step=0.1, value=0.0, key="db_disc_val")
-                else:
-                    discount_value_db = st.number_input("Descuento ($)", min_value=0.0, step=0.01, value=0.0, key="db_disc_val")
-        else:
-            discount_type_db = "none"
-            discount_value_db = 0.0
-        
+            if add_discount:
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    discount_type_db = st.selectbox("Tipo", ["percentage", "fixed"],
+                        format_func=lambda x: {"percentage": "Porcentaje (%)", "fixed": "Monto Fijo ($)"}[x],
+                        key="db_disc_type")
+                with col_d2:
+                    if discount_type_db == "percentage":
+                        discount_value_db = st.number_input("Descuento (%)", min_value=0.0, max_value=100.0, step=0.1, value=0.0, key="db_disc_val")
+                    else:
+                        discount_value_db = st.number_input("Descuento ($)", min_value=0.0, step=0.01, value=0.0, key="db_disc_val")
+            else:
+                discount_type_db = "none"
+                discount_value_db = 0.0
         if st.button("➕ Agregar desde DB"):
             if qty > 0:
                 st.session_state.quote_products.append({
@@ -1422,13 +1334,11 @@ def show_main_app():
         name = col1.text_input("Nombre")
         qty = col2.number_input("Cantidad", min_value=0.0, step=1.0)
         price = col3.number_input("Precio Unit.", min_value=0.0, step=0.01)
-        
-        # Discount options
         st.markdown("##### 💰 Descuento (Opcional)")
         col_d1, col_d2 = st.columns(2)
         with col_d1:
-            discount_type = st.selectbox("Tipo de Descuento", ["none", "percentage", "fixed"], 
-                                        format_func=lambda x: {"none": "Sin Descuento", "percentage": "Porcentaje (%)", "fixed": "Monto Fijo ($)"}[x])
+            discount_type = st.selectbox("Tipo de Descuento", ["none", "percentage", "fixed"],
+                format_func=lambda x: {"none": "Sin Descuento", "percentage": "Porcentaje (%)", "fixed": "Monto Fijo ($)"}[x])
         with col_d2:
             if discount_type != "none":
                 if discount_type == "percentage":
@@ -1437,7 +1347,6 @@ def show_main_app():
                     discount_value = st.number_input("Descuento ($)", min_value=0.0, step=0.01, value=0.0)
             else:
                 discount_value = 0.0
-        
         submitted = col4.form_submit_button("➕")
         if submitted and name and qty > 0 and price > 0:
             st.session_state.quote_products.append({
@@ -1451,7 +1360,6 @@ def show_main_app():
 
     # Quote Display & Controls
     if st.session_state.quote_products:
-        # Calculate item discounts for display
         for p in st.session_state.quote_products:
             discount_amt = calculate_item_discount(
                 p.get('unit_price', 0),
@@ -1461,21 +1369,15 @@ def show_main_app():
             )
             p['discount_amount'] = discount_amt
             p['final_price'] = (p.get('quantity', 0) * p.get('unit_price', 0)) - discount_amt
-        
         df = pd.DataFrame(st.session_state.quote_products)
         df["subtotal"] = df["quantity"] * df["unit_price"]
-        
         edited = st.data_editor(
             df,
             column_config={
                 "product_name": st.column_config.TextColumn("Producto", width="large"),
                 "quantity": st.column_config.NumberColumn("Cantidad", format="%.2f"),
                 "unit_price": st.column_config.NumberColumn("Precio Unit. ($)", format="%.2f"),
-                "discount_type": st.column_config.SelectboxColumn(
-                    "Tipo Desc.",
-                    options=["none", "percentage", "fixed"],
-                    width="small"
-                ),
+                "discount_type": st.column_config.SelectboxColumn("Tipo Desc.", options=["none", "percentage", "fixed"], width="small"),
                 "discount_value": st.column_config.NumberColumn("Valor Desc.", format="%.2f"),
                 "discount_amount": st.column_config.NumberColumn("Desc. ($)", disabled=True, format="%.2f"),
                 "subtotal": st.column_config.NumberColumn("Subtotal ($)", disabled=True, format="%.2f"),
@@ -1496,7 +1398,6 @@ def show_main_app():
         charges['insurance'] = cols[2].checkbox("Seguro\n(1%)", value=charges['insurance'])
         charges['transport'] = cols[3].checkbox("Transporte\n(3%)", value=charges['transport'])
         charges['contingency'] = cols[4].checkbox("Imprevisto\n(3%)", value=charges['contingency'])
-
         totals = calculate_quote(st.session_state.quote_products, charges)
 
         # Metrics
@@ -1506,7 +1407,7 @@ def show_main_app():
             st.metric("Total Items", f"${totals['items_total']:,.2f}")
             if totals.get('total_discounts', 0) > 0:
                 st.metric("Descuentos", f"-${totals['total_discounts']:,.2f}", delta=f"-{(totals['total_discounts']/totals['items_total']*100):.1f}%", delta_color="inverse")
-                st.metric("Después de Desc.", f"${totals['items_after_discount']:,.2f}")
+            st.metric("Después de Desc.", f"${totals['items_after_discount']:,.2f}")
             if charges['supervision']:
                 st.metric("Supervisión (10%)", f"${totals['supervision']:,.2f}")
             if charges['admin']:
@@ -1523,8 +1424,8 @@ def show_main_app():
             st.metric("ITBIS (18%)", f"${totals['itbis']:,.2f}")
             st.markdown(f"""
             <div style="background:rgba(18,18,36,0.7); padding:1rem; border-radius:16px; text-align:center; border:1px solid rgba(100,180,255,0.2);">
-                <div style="font-size:20px; font-weight:600; color:#4deeea;">TOTAL GENERAL</div>
-                <div style="font-size:36px; font-weight:700; color:white;">${totals['grand_total']:,.2f}</div>
+            <div style="font-size:20px; font-weight:600; color:#4deeea;">TOTAL GENERAL</div>
+            <div style="font-size:36px; font-weight:700; color:white;">${totals['grand_total']:,.2f}</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -1535,30 +1436,33 @@ def show_main_app():
             if st.button(save_button_text, type="primary", use_container_width=True):
                 if st.session_state.current_client_id and client_name.strip():
                     if editing_mode:
-                        # Update existing quote
+                        # BEFORE updating, capture current state as history snapshot
+                        current_quote, current_items = get_quote_by_id(st.session_state.editing_quote_id)
+                        if current_quote:
+                            snapshot_data = {
+                                "quote": current_quote,
+                                "items": current_items
+                            }
+                            save_quote_snapshot(st.session_state.editing_quote_id, snapshot_data)
+
+                        # Then update existing quote
                         with get_db_connection() as conn:
                             cur = conn.cursor()
-                            # Update quote
                             charges_str = str(charges)
                             cur.execute("""
-                                UPDATE quotes 
+                                UPDATE quotes
                                 SET project_name = ?, notes = ?, total_amount = ?, included_charges = ?
                                 WHERE quote_id = ?
                             """, (project_name, notes, totals['grand_total'], charges_str, st.session_state.editing_quote_id))
-                            
-                            # Delete old items
                             cur.execute("DELETE FROM quote_items WHERE quote_id = ?", (st.session_state.editing_quote_id,))
-                            
-                            # Insert new items
                             for item in st.session_state.quote_products:
                                 cur.execute("""
                                     INSERT INTO quote_items (quote_id, product_name, quantity, unit_price, discount_type, discount_value, auto_imported)
                                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                                """, (st.session_state.editing_quote_id, item["product_name"], item["quantity"], 
-                                      item["unit_price"], item.get("discount_type", "none"), 
+                                """, (st.session_state.editing_quote_id, item["product_name"], item["quantity"],
+                                      item["unit_price"], item.get("discount_type", "none"),
                                       item.get("discount_value", 0), int(item.get("auto_imported", False))))
                             conn.commit()
-                        
                         st.success(f"✅ Cotización {st.session_state.editing_quote_id} actualizada exitosamente")
                         st.session_state.editing_quote_id = None
                         st.session_state.editing_quote_data = None
@@ -1580,165 +1484,290 @@ def show_main_app():
                         st.rerun()
                 else:
                     st.error("Seleccione un cliente y nombre de empresa.")
-        
         with col2:
             if st.button("🔄 Limpiar Cotización", use_container_width=True):
                 st.session_state.quote_products = []
                 st.session_state.editing_quote_id = None
                 st.session_state.editing_quote_data = None
                 st.rerun()
-
     else:
         st.info("👆 Agregue productos para crear una cotización.")
 
     # Manage Existing Quotes
     st.markdown("### 📂 Cotizaciones Guardadas")
+
+    # --- GLOBAL SEARCH & FILTERS ---
     if st.session_state.current_client_id:
-        quotes = get_all_quotes_for_client(st.session_state.current_client_id)
-        
-        if quotes:
-            for q in quotes:
-                with st.expander(f"{q['quote_id']} - {q['project_name']} (${q['total_amount']:,.2f}) - {q['status']}"):
-                    st.write(f"**Fecha:** {q['date']}")
+        # Global search input
+        search_query = st.text_input("🔍 Buscar en cotizaciones", value=st.session_state.global_search_query, key="global_search")
+        st.session_state.global_search_query = search_query.lower().strip()
+
+        # Filters in expander
+        with st.expander("FilterWhere"):
+            col1, col2 = st.columns(2)
+            with col1:
+                date_from = st.date_input("Desde", value=None, key="date_from")
+                status_filter = st.selectbox("Estado", ["All", "Draft", "Invoiced"], index=0 if st.session_state.filter_status == "All" else ["All", "Draft", "Invoiced"].index(st.session_state.filter_status))
+            with col2:
+                date_to = st.date_input("Hasta", value=None, key="date_to")
+                amount_min = st.number_input("Monto mín.", min_value=0.0, value=st.session_state.filter_amount_min or 0.0, step=100.0)
+                amount_max = st.number_input("Monto máx.", min_value=0.0, value=st.session_state.filter_amount_max or 0.0, step=100.0)
+
+            if st.button("🧹 Limpiar filtros"):
+                st.session_state.filter_date_from = None
+                st.session_state.filter_date_to = None
+                st.session_state.filter_status = "All"
+                st.session_state.filter_amount_min = None
+                st.session_state.filter_amount_max = None
+                st.rerun()
+
+            # Update session state
+            st.session_state.filter_date_from = str(date_from) if date_from else None
+            st.session_state.filter_date_to = str(date_to) if date_to else None
+            st.session_state.filter_status = status_filter
+            st.session_state.filter_amount_min = amount_min if amount_min > 0 else None
+            st.session_state.filter_amount_max = amount_max if amount_max > 0 else None
+
+        # Fetch all quotes for client
+        all_quotes = get_all_quotes_for_client(st.session_state.current_client_id)
+
+        # Apply filters
+        filtered_quotes = []
+        for q in all_quotes:
+            # Status filter
+            if st.session_state.filter_status != "All" and q['status'] != st.session_state.filter_status:
+                continue
+
+            # Date filter
+            quote_date = datetime.strptime(q['date'], "%Y-%m-%d").date()
+            if st.session_state.filter_date_from:
+                if quote_date < datetime.strptime(st.session_state.filter_date_from, "%Y-%m-%d").date():
+                    continue
+            if st.session_state.filter_date_to:
+                if quote_date > datetime.strptime(st.session_state.filter_date_to, "%Y-%m-%d").date():
+                    continue
+
+            # Amount filter
+            if st.session_state.filter_amount_min is not None and q['total_amount'] < st.session_state.filter_amount_min:
+                continue
+            if st.session_state.filter_amount_max is not None and q['total_amount'] > st.session_state.filter_amount_max:
+                continue
+
+            # Search filter
+            match = False
+            if not st.session_state.global_search_query:
+                match = True
+            else:
+                query = st.session_state.global_search_query
+                if (query in q['quote_id'].lower() or
+                    query in q.get('project_name', '').lower() or
+                    query in q.get('notes', '').lower()):
+                    match = True
+                else:
+                    # Check product names in items
                     items_rows = query_db(
-                        "SELECT product_name, quantity, unit_price FROM quote_items WHERE quote_id = ?",
+                        "SELECT product_name FROM quote_items WHERE quote_id = ?",
                         (q["quote_id"],),
                         fetch_all=True
                     )
-                    items_df = pd.DataFrame([dict(row) for row in items_rows])
-                    if not items_df.empty:
-                        items_df['subtotal'] = items_df['quantity'] * items_df['unit_price']
-                        st.dataframe(items_df, use_container_width=True)
-                    
-                    quote_data, items_list = get_quote_by_id(q["quote_id"])
-                    client_data = get_client_by_id(st.session_state.current_client_id)
-                    try:
-                        included_charges = ast.literal_eval(quote_data["included_charges"])
-                    except:
-                        included_charges = {k: True for k in ['supervision','admin','insurance','transport','contingency']}
-                    totals = calculate_quote(items_list, included_charges)
+                    for item_row in items_rows:
+                        if query in item_row[0].lower():
+                            match = True
+                            break
+            if match:
+                filtered_quotes.append(q)
 
-                    if q["status"] == "Draft":
-                        # Action buttons for draft quotes
-                        col1, col2, col3 = st.columns(3)
-                        
-                        # Edit button
-                        with col1:
-                            if st.button("✏️ Editar", key=f"edit_{q['quote_id']}", use_container_width=True):
-                                # Load quote data into editing mode
-                                st.session_state.editing_quote_id = q['quote_id']
-                                st.session_state.editing_quote_data = quote_data
-                                st.session_state.quote_products = items_list
-                                st.session_state.included_charges = included_charges
-                                st.rerun()
-                        
-                        # Download PDF
-                        with col2:
-                            pdf = QuotePDF()
-                            pdf.add_page()
-                            pdf.quote_info(quote_data, client_data)
-                            pdf.items_table(items_list)
-                            pdf.cost_summary(totals, included_charges)
-                            # Add notes section if notes exist
-                            if quote_data.get('notes'):
-                                pdf.notes_section(quote_data['notes'])
-                            pdf_bytes = pdf.output(dest="S").encode("latin-1")
-                            
-                            st.download_button(
-                                "📄 PDF",
-                                pdf_bytes,
-                                f"{q['quote_id']}_cotizacion.pdf",
-                                "application/pdf",
-                                use_container_width=True,
-                                key=f"dl_quote_{q['quote_id']}"
-                            )
-
-                        # Convert to invoice
-                        with col3:
-                            if st.button("🖨️ Factura", key=f"inv_{q['quote_id']}", use_container_width=True):
-                                # Show confirmation dialog
-                                st.session_state.confirm_convert = q["quote_id"]
-                            
-                        # Confirmation dialog for convert
-                        if st.session_state.get('confirm_convert') == q["quote_id"]:
-                            st.warning(f"⚠️ ¿Convertir cotización {q['quote_id']} en factura?")
-                            col_a, col_b = st.columns(2)
-                            with col_a:
-                                if st.button("✅ Sí, Convertir", key=f"confirm_{q['quote_id']}", use_container_width=True):
-                                    new_invoice_id = update_quote_status(q["quote_id"], "Invoiced")
-                                    st.success(f"✅ Convertido a factura: {new_invoice_id}")
-                                    del st.session_state.confirm_convert
-                                    st.rerun()
-                            with col_b:
-                                if st.button("❌ Cancelar", key=f"cancel_{q['quote_id']}", use_container_width=True):
-                                    del st.session_state.confirm_convert
-                                    st.rerun()
-                        
-                        # Delete button with confirmation
-                        st.markdown("---")
-                        if st.button(f"🗑️ Eliminar Cotización {q['quote_id']}", key=f"del_{q['quote_id']}", type="secondary"):
-                            st.session_state.confirm_delete_quote = q["quote_id"]
-                        
-                        # Confirmation dialog for delete
-                        if st.session_state.get('confirm_delete_quote') == q["quote_id"]:
-                            st.error(f"⚠️ ¿Está seguro que desea eliminar la cotización {q['quote_id']}? Esta acción no se puede deshacer.")
-                            col_a, col_b = st.columns(2)
-                            with col_a:
-                                if st.button("✅ Sí, Eliminar", key=f"confirm_del_{q['quote_id']}", type="primary"):
-                                    delete_quote(q["quote_id"])
-                                    del st.session_state.confirm_delete_quote
-                                    st.success("Cotización eliminada exitosamente")
-                                    st.rerun()
-                            with col_b:
-                                if st.button("❌ Cancelar", key=f"cancel_del_{q['quote_id']}"):
-                                    del st.session_state.confirm_delete_quote
-                                    st.rerun()
-
-                    elif q["status"] == "Invoiced":
-                        # Download INVOICE PDF
-                        pdf = InvoicePDF()
-                        pdf.add_page()
-                        pdf.invoice_info(quote_data, client_data)
-                        pdf.items_table(items_list)
-                        pdf.cost_summary(totals, included_charges)
-                        # Add notes section if notes exist
-                        if quote_data.get('notes'):
-                            pdf.notes_section(quote_data['notes'])
-                        pdf_bytes = pdf.output(dest="S").encode("latin-1")
-                        
-                        st.download_button(
-                            "📥 Descargar Factura PDF",
-                            pdf_bytes,
-                            f"{q['quote_id']}_factura.pdf",
-                            "application/pdf",
-                            use_container_width=True,
-                            key=f"dl_invoice_{q['quote_id']}"
-                        )
-                        st.success("✅ Factura lista para descargar")
-                        
-                        # Delete invoice with confirmation
-                        st.markdown("---")
-                        if st.button(f"🗑️ Eliminar Factura {q['quote_id']}", key=f"del_inv_{q['quote_id']}", type="secondary"):
-                            st.session_state.confirm_delete_invoice = q["quote_id"]
-                        
-                        # Confirmation dialog for delete invoice
-                        if st.session_state.get('confirm_delete_invoice') == q["quote_id"]:
-                            st.error(f"⚠️ ¿Está seguro que desea eliminar la factura {q['quote_id']}? Esta acción no se puede deshacer.")
-                            col_a, col_b = st.columns(2)
-                            with col_a:
-                                if st.button("✅ Sí, Eliminar", key=f"confirm_del_inv_{q['quote_id']}", type="primary"):
-                                    delete_quote(q["quote_id"])
-                                    del st.session_state.confirm_delete_invoice
-                                    st.success("Factura eliminada exitosamente")
-                                    st.rerun()
-                            with col_b:
-                                if st.button("❌ Cancelar", key=f"cancel_del_inv_{q['quote_id']}"):
-                                    del st.session_state.confirm_delete_invoice
-                                    st.rerun()
-        else:
-            st.info("No hay cotizaciones guardadas para este cliente.")
+        quotes = filtered_quotes
     else:
-        st.info("Seleccione un cliente para ver sus cotizaciones.")
+        quotes = []
+
+    # --- DISPLAY QUOTES OR HISTORY ---
+    if st.session_state.viewing_history_for:
+        st.markdown(f"### 🕰️ Historial de {st.session_state.viewing_history_for}")
+        history = get_quote_history(st.session_state.viewing_history_for)
+        if history:
+            for entry in history:
+                ts = entry['snapshot_date']
+                with st.expander(f"{ts}"):
+                    st.json(entry['data'])
+                    if st.button("↩️ Cargar en editor", key=f"load_hist_{ts}"):
+                        data = entry['data']
+                        st.session_state.editing_quote_id = st.session_state.viewing_history_for
+                        st.session_state.editing_quote_data = data['quote']
+                        st.session_state.quote_products = data['items']
+                        try:
+                            st.session_state.included_charges = ast.literal_eval(data['quote']['included_charges'])
+                        except:
+                            st.session_state.included_charges = {k: True for k in ['supervision','admin','insurance','transport','contingency']}
+                        st.session_state.viewing_history_for = None
+                        st.rerun()
+        else:
+            st.info("No hay historial para esta cotización.")
+        if st.button("⬅️ Volver a cotizaciones"):
+            st.session_state.viewing_history_for = None
+            st.rerun()
+    else:
+        if st.session_state.current_client_id:
+            if quotes:
+                for q in quotes:
+                    with st.expander(f"{q['quote_id']} - {q['project_name']} (${q['total_amount']:,.2f}) - {q['status']}"):
+                        st.write(f"**Fecha:** {q['date']}")
+                        items_rows = query_db(
+                            "SELECT product_name, quantity, unit_price FROM quote_items WHERE quote_id = ?",
+                            (q["quote_id"],),
+                            fetch_all=True
+                        )
+                        items_df = pd.DataFrame([dict(row) for row in items_rows])
+                        if not items_df.empty:
+                            items_df['subtotal'] = items_df['quantity'] * items_df['unit_price']
+                            st.dataframe(items_df, use_container_width=True)
+
+                        quote_data, items_list = get_quote_by_id(q["quote_id"])
+                        client_data = get_client_by_id(st.session_state.current_client_id)
+                        try:
+                            included_charges = ast.literal_eval(quote_data["included_charges"])
+                        except:
+                            included_charges = {k: True for k in ['supervision','admin','insurance','transport','contingency']}
+                        totals = calculate_quote(items_list, included_charges)
+
+                        if q["status"] == "Draft":
+                            col1, col2, col3, col4 = st.columns(4)
+                            # Edit button
+                            with col1:
+                                if st.button("✏️ Editar", key=f"edit_{q['quote_id']}", use_container_width=True):
+                                    st.session_state.editing_quote_id = q['quote_id']
+                                    st.session_state.editing_quote_data = quote_data
+                                    st.session_state.quote_products = items_list
+                                    st.session_state.included_charges = included_charges
+                                    st.rerun()
+                            # Duplicate button
+                            with col2:
+                                if st.button("🔄 Duplicar", key=f"dup_{q['quote_id']}", use_container_width=True):
+                                    new_id = duplicate_quote(q['quote_id'])
+                                    if new_id:
+                                        st.success(f"✅ Duplicada: {new_id}")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ Error al duplicar")
+                            # History button
+                            with col3:
+                                if st.button("🕰️ Historial", key=f"hist_{q['quote_id']}", use_container_width=True):
+                                    st.session_state.viewing_history_for = q['quote_id']
+                                    st.rerun()
+                            # PDF button
+                            with col4:
+                                pdf = QuotePDF()
+                                pdf.add_page()
+                                pdf.quote_info(quote_data, client_data)
+                                pdf.items_table(items_list)
+                                pdf.cost_summary(totals, included_charges)
+                                if quote_data.get('notes'):
+                                    pdf.notes_section(quote_data['notes'])
+
+                                # Always get PDF as raw data
+                                raw = pdf.output(dest="S")
+
+                                # Normalize to immutable bytes for Streamlit
+                                if isinstance(raw, str):
+                                    pdf_bytes = raw.encode("latin-1")
+                                else:
+                                    pdf_bytes = bytes(raw)
+
+                                st.download_button(
+                                    "📄 PDF",
+                                    pdf_bytes,
+                                    f"{q['quote_id']}_cotizacion.pdf",
+                                    "application/pdf",
+                                    use_container_width=True,
+                                    key=f"dl_quote_{q['quote_id']}"
+                                )
+                            # Convert to invoice
+                            st.markdown("---")
+                            if st.button("🖨️ Factura", key=f"inv_{q['quote_id']}", use_container_width=True):
+                                st.session_state.confirm_convert = q["quote_id"]
+
+                            # Confirmation dialog for convert
+                            if st.session_state.get('confirm_convert') == q["quote_id"]:
+                                st.warning(f"⚠️ ¿Convertir cotización {q['quote_id']} en factura?")
+                                col_a, col_b = st.columns(2)
+                                with col_a:
+                                    if st.button("✅ Sí, Convertir", key=f"confirm_{q['quote_id']}", use_container_width=True):
+                                        new_invoice_id = update_quote_status(q["quote_id"], "Invoiced")
+                                        st.success(f"✅ Convertido a factura: {new_invoice_id}")
+                                        del st.session_state.confirm_convert
+                                        st.rerun()
+                                with col_b:
+                                    if st.button("❌ Cancelar", key=f"cancel_{q['quote_id']}", use_container_width=True):
+                                        del st.session_state.confirm_convert
+                                        st.rerun()
+
+                            # Delete button
+                            if st.button(f"🗑️ Eliminar Cotización {q['quote_id']}", key=f"del_{q['quote_id']}", type="secondary"):
+                                st.session_state.confirm_delete_quote = q["quote_id"]
+
+                            # Confirmation dialog for delete
+                            if st.session_state.get('confirm_delete_quote') == q["quote_id"]:
+                                st.error(f"⚠️ ¿Está seguro que desea eliminar la cotización {q['quote_id']}? Esta acción no se puede deshacer.")
+                                col_a, col_b = st.columns(2)
+                                with col_a:
+                                    if st.button("✅ Sí, Eliminar", key=f"confirm_del_{q['quote_id']}", type="primary"):
+                                        delete_quote(q["quote_id"])
+                                        del st.session_state.confirm_delete_quote
+                                        st.success("Cotización eliminada exitosamente")
+                                        st.rerun()
+                                with col_b:
+                                    if st.button("❌ Cancelar", key=f"cancel_del_{q['quote_id']}"):
+                                        del st.session_state.confirm_delete_quote
+                                        st.rerun()
+
+                        elif q["status"] == "Invoiced":
+                            # Download INVOICE PDF
+                            with col4:
+                                pdf = InvoicePDF()
+                                pdf.add_page()
+                                pdf.invoice_info(quote_data, client_data)
+                                pdf.items_table(items_list)
+                                pdf.cost_summary(totals, included_charges)
+                                if quote_data.get('notes'):
+                                    pdf.notes_section(quote_data['notes'])
+
+                                raw = pdf.output(dest="S")
+
+                                # Normalize to immutable bytes
+                                if isinstance(raw, str):
+                                    pdf_bytes = raw.encode("latin-1")
+                                else:
+                                    pdf_bytes = bytes(raw)
+
+                                st.download_button(
+                                    "📥 Descargar Factura PDF",
+                                    pdf_bytes,
+                                    f"{q['quote_id']}_factura.pdf",
+                                    "application/pdf",
+                                    use_container_width=True,
+                                    key=f"dl_invoice_{q['quote_id']}"
+                                )
+
+                                st.success("✅ Factura lista para descargar")
+
+                                # Delete invoice with confirmation
+                                st.markdown("---")
+                                if st.button(f"🗑️ Eliminar Factura {q['quote_id']}", key=f"del_inv_{q['quote_id']}", type="secondary"):
+                                    st.session_state.confirm_delete_invoice = q["quote_id"]
+
+                                if st.session_state.get('confirm_delete_invoice') == q["quote_id"]:
+                                    st.error(f"⚠️ ¿Está seguro que desea eliminar la factura {q['quote_id']}? Esta acción no se puede deshacer.")
+                                    col_a, col_b = st.columns(2)
+                                    with col_a:
+                                        if st.button("✅ Sí, Eliminar", key=f"confirm_del_inv_{q['quote_id']}", type="primary"):
+                                            delete_quote(q["quote_id"])
+                                            del st.session_state.confirm_delete_invoice
+                                            st.success("Factura eliminada exitosamente")
+                                            st.rerun()
+                                    with col_b:
+                                        if st.button("❌ Cancelar", key=f"cancel_del_inv_{q['quote_id']}"):
+                                            del st.session_state.confirm_delete_invoice
+                                            st.rerun()
 
 # ----------------------------
 # APP ROUTER
