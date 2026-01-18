@@ -1750,12 +1750,12 @@ def show_main_app():
 
                                 st.success("✅ Factura lista para descargar")
 
-                                # Delete invoice with confirmation
-                                st.markdown("---")
-                                if st.button(f"🗑️ Eliminar Factura {q['quote_id']}", key=f"del_inv_{q['quote_id']}", type="secondary"):
+                            # Delete invoice with confirmation
+                            st.markdown("---")
+                            if st.button(f"🗑️ Eliminar Factura {q['quote_id']}", key=f"del_inv_{q['quote_id']}", type="secondary"):
                                     st.session_state.confirm_delete_invoice = q["quote_id"]
 
-                                if st.session_state.get('confirm_delete_invoice') == q["quote_id"]:
+                            if st.session_state.get('confirm_delete_invoice') == q["quote_id"]:
                                     st.error(f"⚠️ ¿Está seguro que desea eliminar la factura {q['quote_id']}? Esta acción no se puede deshacer.")
                                     col_a, col_b = st.columns(2)
                                     with col_a:
@@ -1782,3 +1782,4 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
+
