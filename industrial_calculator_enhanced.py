@@ -19,6 +19,9 @@ def get_db_connection():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+def load_css(file_path):
+    with open(file_path) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 def init_db():
     with get_db_connection() as conn:
@@ -147,6 +150,17 @@ def add_client(company, contact="", email="", phone="", address="", tax_id="", n
         """, (company, contact, email, phone, address, tax_id, notes))
         conn.commit()
         return cur.lastrowid
+    
+def update_client(client_id, company, contact="", email="", phone="", address="", tax_id="", notes=""):
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+        UPDATE clients SET
+            company_name = ?, contact_name = ?, email = ?, phone = ?,
+            address = ?, tax_id = ?, notes = ?
+        WHERE id = ?
+        """, (company, contact, email, phone, address, tax_id, notes, client_id))
+        conn.commit()
 
 def get_all_clients():
     rows = query_db("SELECT * FROM clients ORDER BY company_name", fetch_all=True)
@@ -608,7 +622,7 @@ def show_login_page():
     """, unsafe_allow_html=True)
     
     st.markdown('<div style="text-align:center; font-size:72px; margin:2rem 0;">🏗️</div>', unsafe_allow_html=True)
-    st.markdown('<div class="login-title">RIGC 2030</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-title">METPRO ERP</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-subtitle">SISTEMA DE CÁLCULO INDUSTRIAL</div>', unsafe_allow_html=True)
     
     if st.session_state.attempts >= MAX_ATTEMPTS:
@@ -652,6 +666,7 @@ def init_session_state():
         'viewing_history_for': None,
         'global_search_query': "",
         'filter_status': "All",
+        'editing_client_id': None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -659,6 +674,12 @@ def init_session_state():
 
 def show_main_app():
     init_session_state()
+    
+    # Load custom CSS if file exists
+    if os.path.exists("style.css"):
+        load_css("style.css")
+    
+    # Rest of your sidebar and UI code...
     
     # Sidebar
     with st.sidebar:
@@ -670,12 +691,54 @@ def show_main_app():
             if not clients:
                 st.info("No hay clientes.")
             else:
-                names = ["Seleccione..."] + [c["company_name"] for c in clients]
-                idx = st.selectbox("Cliente:", range(len(names)), format_func=lambda x: names[x])
-                if idx > 0:
-                    client = clients[idx - 1]
-                    st.session_state.current_client_id = client["id"]
-                    st.success(f"✅ {client['company_name']}")
+                # Show client list with edit option
+                client_names = [c["company_name"] for c in clients]
+                selected_idx = st.selectbox("Cliente:", range(len(client_names)), 
+                                            format_func=lambda i: client_names[i])
+                selected_client = clients[selected_idx]
+
+                # Horizontal buttons: Edit | Select
+                edit_col, select_col = st.columns(2)
+                with edit_col:
+                    if st.button("✏️ Editar", use_container_width=True):
+                        st.session_state.editing_client_id = selected_client["id"]
+                        st.rerun()
+                with select_col:
+                    if st.button("Agregar", use_container_width=True):
+                        st.session_state.current_client_id = selected_client["id"]
+                        st.rerun()
+
+        # Editing form
+        if st.session_state.get('editing_client_id') == selected_client["id"]:
+            st.markdown("### 📝 Editar Cliente")
+            with st.form("edit_client_form"):
+                company = st.text_input("Empresa *", value=selected_client["company_name"])
+                contact = st.text_input("Contacto", value=selected_client.get("contact_name") or "")
+                email = st.text_input("Email", value=selected_client.get("email") or "")
+                phone = st.text_input("Teléfono", value=selected_client.get("phone") or "")
+                address = st.text_area("Dirección", value=selected_client.get("address") or "")
+                tax_id = st.text_input("RNC/Cédula", value=selected_client.get("tax_id") or "")
+                notes = st.text_area("Notas", value=selected_client.get("notes") or "")
+                
+                col_save, col_cancel = st.columns(2)
+                with col_save:
+                    save_clicked = st.form_submit_button("💾 Guardar Cambios", type="primary")
+                with col_cancel:
+                    if st.form_submit_button("❌ Cancelar"):
+                        del st.session_state.editing_client_id
+                        st.rerun()
+                
+                if save_clicked:
+                    if company.strip():
+                        update_client(
+                            selected_client["id"], company, contact, email,
+                            phone, address, tax_id, notes
+                        )
+                        st.success("✅ Cliente actualizado")
+                        del st.session_state.editing_client_id
+                        st.rerun()
+                    else:
+                        st.error("Empresa es obligatoria.")
         else:
             with st.form("new_client"):
                 company = st.text_input("Empresa *")
@@ -705,9 +768,29 @@ def show_main_app():
             st.rerun()
     
     # Header
-    st.markdown('<h1 style="text-align:center; font-size:48px;">RIGC 2030</h1>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align:center; color:#a3a3a3; margin-top:-10px;">Sistema de Cálculo Industrial</p>', 
-               unsafe_allow_html=True)
+    st.markdown("""
+<h1 style="
+    text-align: center;
+    font-size: 48px;
+    font-weight: 800;
+    background: linear-gradient(90deg, #ffffff 0%, #a0a0ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.2);
+">
+    METPRO SISTEMA ERP
+</h1>
+<p style="
+    text-align: center;
+    color: #b0b0b0;
+    font-size: 18px;
+    margin-top: 0;
+    letter-spacing: 0.5px;
+">
+    Sistema de Cálculo Industrial
+</p>
+""", unsafe_allow_html=True)
     
     # Product Management (if active)
     if st.session_state.show_product_manager:
