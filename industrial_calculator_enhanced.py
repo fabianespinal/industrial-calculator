@@ -405,17 +405,50 @@ class QuotePDF(FPDF):
         self.ln(10)
     
     def footer(self):
-        self.set_y(-20)
-        self.set_font("Helvetica", "I", 8)
+        self.set_y(-50)
+        
+        # Signature section
+        self.set_font("Helvetica", "B", 10)
+        self.set_text_color(0, 0, 0)
+        
+        # Two columns for signatures
+        col_width = 85
+        left_x = 20
+        right_x = 115
+        
+        # Left signature - Company
+        self.set_xy(left_x, -50)
+        self.set_xy(left_x, -45)
+        self.line(left_x + 10, self.get_y(), left_x + col_width - 10, self.get_y())
+        self.set_xy(left_x, -40)
+        self.set_font("Helvetica", "", 8)
+        self.cell(col_width, 4, "Autorizado Por:", 0, 1, "C")
+        self.set_xy(left_x, -36)
+        self.cell(col_width, 4, "Karmary Mata", 0, 1, "C")
+        
+        # Right signature - Client
+        self.set_xy(right_x, -50)
+        self.set_font("Helvetica", "B", 10)
+        self.set_xy(right_x, -45)
+        self.line(right_x + 10, self.get_y(), right_x + col_width - 10, self.get_y())
+        self.set_xy(right_x, -40)
+        self.set_font("Helvetica", "", 8)
+        self.cell(col_width, 4, "Firma Cliente", 0, 1, "C")
+        self.set_xy(right_x, -36)
+        
+        # Company info and page number at bottom
+        self.set_y(-25)
+        self.set_font("Helvetica", "I", 7)
         self.set_text_color(128, 128, 128)
-        self.cell(0, 5, "Parque Industrial Disdo, Calle Central No. 1, Hato Nuevo Palave", 0, 1, "C")
-        self.cell(0, 5, "Santo Domingo Oeste | Tel: 829-439-8476 | RNC: 131-71683-2", 0, 1, "C")
-        self.cell(0, 5, f"Pagina {self.page_no()}", 0, 0, "C")
+        self.cell(0, 4, "Parque Industrial Disdo, Calle Central No. 1, Hato Nuevo Palave", 0, 1, "C")
+        self.cell(0, 4, "Santo Domingo Oeste | Tel: 829-439-8476 | RNC: 131-71683-2", 0, 1, "C")
+        self.set_y(-15)
+        self.cell(0, 4, f"Pagina {self.page_no()}", 0, 0, "C")
     
     def quote_info(self, quote_data, client_data):
         self.set_xy(10, 55)
         self.set_fill_color(240, 240, 240)
-        self.cell(90, 8, "INFORMACION DE COTIZACION", 0, 1, "L", True)
+        self.cell(90, 8, "DATOS PEDIDO", 0, 1, "L", True)
         self.set_font("Helvetica", "", 9)
         for label, key in [("Cotizacion #:", 'quote_id'), ("Fecha:", 'date'), ("Proyecto:", 'project_name')]:
             self.set_x(10)
@@ -1176,5 +1209,6 @@ if st.session_state.authenticated:
     show_main_app()
 else:
     show_login_page()
+
 
 
