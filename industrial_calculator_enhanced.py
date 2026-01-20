@@ -599,14 +599,26 @@ class QuotePDF(FPDF):
 
     def notes_section(self, notes):
         if notes and notes.strip():
-            self.ln(8)
-            self.set_font("Helvetica", "B", 10)
-            self.set_fill_color(240, 248, 255)
-            self.cell(0, 7, "NOTAS Y CONDICIONES", 0, 1, "L", True)
-            self.set_font("Helvetica", "", 9)
-            self.set_text_color(60, 60, 60)
-            self.multi_cell(0, 5, self._clean_text(notes), 0, "L")
-            self.set_text_color(0, 0, 0)
+            self.ln(5)
+
+            # Section title
+            self.set_font("Helvetica", "B", 8.5)
+            self.set_text_color(40, 40, 40)
+            self.cell(0, 5, "NOTAS Y CONDICIONES", 0, 1, "L")
+
+            # Notes text (bold but compact)
+            self.set_font("Helvetica", "B", 6.5)
+            self.set_text_color(80, 80, 80)
+            self.multi_cell(
+                0,
+                3.6,
+                self._clean_text(notes),
+                0,
+                "L"
+            )
+
+        self.set_text_color(0, 0, 0)
+
 
     def _clean_text(self, text):
         replacements = {
@@ -925,7 +937,7 @@ def show_saved_quotes():
         st.info("No hay cotizaciones guardadas")
 
 def show_quote_form():
-    st.markdown("### 📝 Información de la Cotización")
+    st.markdown("Información de la Cotización")
     
     if st.session_state.editing_quote_id:
         st.info(f"✏️ Editando: {st.session_state.editing_quote_id}")
@@ -952,7 +964,7 @@ def show_quote_form():
     notes = st.text_area("Notas", value=default_notes)
     
     # Add products
-    st.markdown("#### ➕ Agregar Producto")
+    st.markdown("Agregar Producto")
     products_list = get_products_for_dropdown()
     
     if products_list:
@@ -1184,11 +1196,11 @@ def show_main_app():
                 # Horizontal buttons
                 edit_col, select_col = st.columns(2)
                 with edit_col:
-                    if st.button("✏️ Editar", use_container_width=True):
+                    if st.button("Editar", use_container_width=True):
                         st.session_state.editing_client_id = selected_client["id"]
                         st.rerun()
                 with select_col:
-                    if st.button("✅ Seleccionar", use_container_width=True):
+                    if st.button("Seleccionar", use_container_width=True):
                         st.session_state.current_client_id = selected_client["id"]
                         st.rerun()
 
