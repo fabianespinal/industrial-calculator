@@ -1,235 +1,182 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-:root {
-    --primary: #1FBAD6;       /* Uber's accent color */
-    --text-color: #000000;    /* Uber uses near-black text */
-    --text-muted: #666666;
-    --bg-color: #ffffff;
-    --card-bg: #ffffff;
-    --border-color: #e0e0e0;
-    --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+/* Hide Streamlit chrome */
+#MainMenu, footer, header {
+    visibility: hidden !important;
 }
 
-.main, .stApp {
-    background: var(--bg-color);
-    color: var(--text-color);
-    font-family: 'Inter', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
-    min-height: 100vh;
+/* Global font & background */
+html, body, [data-testid="stAppViewContainer"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: #f9fafb; /* Very light gray */
+    color: #111827; /* Near-black text */
+    letter-spacing: -0.2px;
 }
 
-#MainMenu, footer, header { visibility: hidden; }
-.stDeployButton { display: none; }
-
-.login-container {
-    max-width: 500px;
-    margin: 5rem auto;
-    padding: 2.5rem;
-    background: var(--card-bg);
-    border-radius: 12px;
-    box-shadow: var(--shadow);
-    border: 1px solid var(--border-color);
+/* Smooth transitions */
+* {
+    transition: all 0.15s ease-in-out;
 }
 
-.login-title {
+/* ───────────── SIDEBAR: Light Gray Panel ───────────── */
+[data-testid="stSidebar"] {
+    min-width: 250px !important;
+    background-color: #ffffff !important; /* Pure white */
+    color: #111827 !important;
+    border-right: 1px solid #e5e7eb;
+    padding-top: 1rem !important;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.04);
+}
+
+/* Sidebar headings */
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    color: #111827 !important;
+    font-weight: 700 !important;
+    margin-top: 1.2rem;
+    margin-bottom: 1rem;
+}
+
+/* Sidebar labels */
+[data-testid="stSidebar"] label {
+    color: #374151 !important;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+/* Sidebar inputs */
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] textarea,
+[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div {
+    background-color: #ffffff !important;
+    border: 1px solid #d1d5db !important;
+    color: #111827 !important;
+    border-radius: 6px !important;
+    padding: 0.45rem 0.6rem !important;
+}
+
+/* Sidebar buttons */
+[data-testid="stSidebar"] .stButton button {
+    background-color: #f3f4f6 !important;
+    color: #111827 !important;
+    border: 1px solid #d1d5db !important;
+    font-weight: 600;
+    border-radius: 6px !important;
+    padding: 0.5rem 0.8rem !important;
+}
+
+[data-testid="stSidebar"] .stButton button:hover {
+    background-color: #e5e7eb !important;
+    border-color: #9ca3af !important;
+}
+
+/* Hide collapse button */
+[data-testid="stSidebarCollapseButton"] {
+    display: none !important;
+}
+
+/* ───────────── MAIN CONTENT ───────────── */
+.main .block-container {
+    padding-top: 2.5rem;
+    padding-left: 2.5rem !important;
+    padding-right: 2.5rem !important;
+    max-width: 1200px !important;
+    margin: 0 auto !important;
+}
+
+/* Headings */
+.stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
     text-align: center;
-    font-size: 28px;
-    font-weight: 700;
-    margin-bottom: 1.5rem;
-    color: var(--text-color);
-    text-transform: none;
+    color: #111827;
+    font-weight: 800;
     letter-spacing: -0.5px;
 }
 
-/* Text input */
-.stTextInput > div > div > input {
-    background: #f5f5f5 !important;
-    color: var(--text-color) !important;
-    border: 1px solid #ddd !important;
-    border-radius: 8px !important;
-    padding: 12px 16px !important;
-    font-size: 16px !important;
-    font-weight: 500 !important;
-    transition: all 0.2s ease !important;
-}
-.stTextInput > div > div > input:focus {
-    border-color: var(--primary) !important;
-    box-shadow: 0 0 0 3px rgba(31, 186, 214, 0.15) !important;
-}
-
-/* --- Dark button base --- */
-.stButton > button {
-    background-color: #668dd6 !important;  /* Dark gray/black */
-    color: #f2f2f2 !important;             /* Light text */
-    border: none !important;
-    font-weight: 700 !important;
-    padding: 12px 24px !important;
-    border-radius: 8px !important;
-    font-size: 16px !important;
-    text-transform: none !important;
-    letter-spacing: normal !important;
-    box-shadow: none !important;
-    transition: all 0.2s ease !important;
-    width: 100%;
-}
-
-/* --- Light hover effect --- */
-.stButton > button:hover {
-    background-color: #d9d9d9 !important;  /* Light gray hover */
-    color: #1023c9 !important;             /* Dark blue text on hover */
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
-}
-
-/* Tabs */
-.stTabs [data-baseweb="tab-list"] {
-    background: transparent;
-    border-bottom: 1px solid var(--border-color);
-    padding: 0;
-    gap: 0;
-    justify-content: center;
-}
-.stTabs [data-baseweb="tab"] {
-    background: transparent;
-    color: var(--text-muted);
-    border: none;
-    padding: 12px 24px;
-    border-radius: 0 !important;
+/* Buttons */
+.stButton > button[kind="primary"] {
+    background-color: #111827 !important;
+    color: #ffffff !important;
+    border: 1px solid #374151 !important;
     font-weight: 600;
-    font-size: 16px;
-    transition: all 0.2s ease;
-    position: relative;
+    border-radius: 6px !important;
+    padding: 0.6rem 1.2rem !important;
 }
-.stTabs [data-baseweb="tab"]:hover {
-    color: var(--primary);
+
+.stButton > button[kind="primary"]:hover {
+    background-color: #1f2937 !important;
 }
-.stTabs [aria-selected="true"] {
-    color: var(--primary) !important;
-}
-.stTabs [aria-selected="true"]::after {
-    content: "";
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: var(--primary);
-    border-radius: 2px;
+
+.stButton > button[kind="secondary"] {
+    background-color: #f3f4f6 !important;
+    color: #111827 !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 6px !important;
 }
 
 /* Cards */
-.result-card, .metric-card {
-    background: var(--card-bg);
+.info-card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
     border-radius: 12px;
-    padding: 1.5rem;
-    margin: 1rem 0;
-    box-shadow: var(--shadow);
-    border: 1px solid var(--border-color);
+    padding: 1.25rem;
     text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
 }
 
-/* Selectbox */
-div[data-baseweb="select"] > div {
-    background-color: #f5f5f5 !important;
-    border: 1px solid #ddd !important;
+.totals-panel {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 1.75rem;
+    color: #111827;
+    text-align: center;
+    border: 1px solid #e5e7eb;
+}
+
+/* Tables & inputs */
+.stDataFrame, .stDataEditor {
+    margin: 0 auto !important;
     border-radius: 8px !important;
-    font-size: 16px !important;
-    font-weight: 500 !important;
-    color: var(--text-color) !important;
-}
-div[data-baseweb="select"] * {
-    color: var(--text-color) !important;
-    font-weight: 500 !important;
+    overflow: hidden !important;
+    border: 1px solid #e5e7eb !important;
+    background-color: #ffffff !important;
+    color: #111827 !important;
 }
 
-/* Number input */
-input[type="number"] {
-    background-color: #f5f5f5 !important;
-    color: var(--text-color) !important;
-    font-size: 16px !important;
-    font-weight: 500 !important;
-    border: 1px solid #ddd !important;
-    border-radius: 8px !important;
+input, textarea, select {
+    border-radius: 6px !important;
+    border: 1px solid #d1d5db !important;
+    padding: 0.6rem !important;
+    background-color: #ffffff !important;
+    color: #111827 !important;
 }
 
-/* DataFrame */
-.stDataFrame {
-    background-color: #fafafa !important;
-    border: 1px solid var(--border-color) !important;
-    border-radius: 12px !important;
-    padding: 12px !important;
-}
-
-/* Metrics */
-[data-testid="stMetricValue"] {
-    color: var(--primary) !important;
-    font-size: 32px !important;
-    font-weight: 700 !important;
-}
-[data-testid="stMetricLabel"] {
-    color: var(--text-muted) !important;
-    font-size: 14px !important;
-    font-weight: 600 !important;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-}
-
-/* Login Page – Uber uses light mode, so remove dark theme */
-html, body, [data-testid="stAppViewContainer"] {
-    background: var(--bg-color);
-    overflow: auto;
-}
-
-/* Headers & Titles – Simplified, Uber-style */
-.header-container {
-    text-align: center;
-    padding: 2.5rem 0;
-    margin-bottom: 2rem;
-}
-.main-title {
-    font-size: 48px;
-    font-weight: 800;
-    color: var(--text-color);
-    text-transform: none;
-    letter-spacing: -1px;
-    margin-bottom: 0.5rem;
-    line-height: 1.1;
-}
-.subtitle {
-    font-size: 18px;
-    color: var(--text-muted);
-    font-weight: 500;
-    text-transform: none;
-    letter-spacing: 0.5px;
-}
-
-/* Footer */
-.footer {
-    text-align: center;
-    padding: 2.5rem 0 1.5rem;
-    color: var(--text-muted);
-    font-size: 14px;
-}
-.footer-title {
-    color: var(--text-color);
-    font-weight: 700;
-    font-size: 16px;
-    text-transform: none;
-    margin-bottom: 0.5rem;
-    display: inline-block;
-}
-.footer small {
-    display: block;
-    margin-top: 0.5rem;
+/* Status badges */
+.status-draft {
+    background: #fef3c7;
+    color: #92400e;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
     font-size: 12px;
-    color: #999;
+    font-weight: 600;
+}
+
+.status-invoiced {
+    background: #dcfce7;
+    color: #166534;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
 }
 
 /* Responsive */
 @media (max-width: 768px) {
-    .login-container {
-        margin: 2rem auto;
-        padding: 1.5rem;
+    [data-testid="stSidebar"] {
+        min-width: 220px !important;
     }
-    .main-title { font-size: 36px; }
-    .subtitle { font-size: 16px; }
+    .main .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
 }
