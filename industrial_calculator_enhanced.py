@@ -747,7 +747,7 @@ def show_product_manager():
             
             col1, col2 = st.columns(2)
             with col1:
-                submit = st.form_submit_button("💾 " + ("Actualizar" if editing else "Agregar"), 
+                submit = st.form_submit_button("✔️" + ("Actualizar" if editing else "Agregar"), 
                                               use_container_width=True, type="primary")
             with col2:
                 if editing and st.form_submit_button("❌ Cancelar", use_container_width=True):
@@ -1152,9 +1152,22 @@ def init_session_state():
 # LOGIN PAGE
 # ----------------------------
 def show_login_page():
-    st.markdown('<div style="text-align:center; font-size:72px; margin:2rem 0;">🏗️</div>', unsafe_allow_html=True)
-    st.markdown('<div style="text-align:center; font-size:40px; font-weight:800; color:#2563eb;">METPRO ERP</div>', unsafe_allow_html=True)
-    st.markdown('<div style="text-align:center; color:#6b7280; font-size:14px; margin-bottom:2rem;">Sistema de Gestión Empresarial</div>', unsafe_allow_html=True)
+    # Logo (centered)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col1:
+        if os.path.exists("logo.png"):
+            st.image("logo.png", width=120)  # Adjust width as needed
+        else:
+            st.markdown('<div style="font-size:72px; text-align:center;">🏗️</div>', unsafe_allow_html=True)
+    
+    st.markdown(
+        '<div style="text-align:center; font-size:40px; font-weight:800; color:#111827; margin-top: 1rem;">METPRO ERP</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div style="text-align:center; color:#4b5563; font-size:14px; margin-bottom:2rem;">Sistema de Gestión Empresarial</div>',
+        unsafe_allow_html=True
+    )
     
     if st.session_state.attempts >= MAX_ATTEMPTS:
         st.error("⚠️ Máximo de intentos alcanzado")
@@ -1259,7 +1272,7 @@ def show_main_app():
         if st.button("📦 Gestión de Productos", use_container_width=True):
             st.session_state.show_product_manager = not st.session_state.show_product_manager
         
-        if st.button("🚪 Cerrar Sesión", use_container_width=True):
+        if st.button("❌ Cerrar Sesión", use_container_width=True):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
