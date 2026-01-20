@@ -668,109 +668,276 @@ def show_product_manager():
     st.markdown("---")
     st.markdown("## 📦 Gestión de Productos")
     
-    tab1, tab2, tab3 = st.tabs(["📋 Lista", "📁 CSV Sync", "➕ Agregar/Editar"])
+    tab1, tab2, tab3 = st.tabs(["📋 Lista", "📁 CSV Sync", "➕ Agregar Producto"])
     
+    # TAB 1: Product List
     with tab1:
         products = get_products_for_dropdown()
-        if products:
-            df = pd.DataFrame(products).rename(columns={'id': 'ID', 'name': 'Nombre', 
-                                                        'description': 'Descripción', 'unit_price': 'Precio'})
-            st.dataframe(df, column_config={"Precio": st.column_config.NumberColumn("Precio", format="$%.2f")},
-                        hide_index=True, use_container_width=True)
-            st.info(f"📊 Total: {len(products)} productos")
-            
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                product_to_edit = st.selectbox("Seleccionar", options=[p['id'] for p in products],
-                    format_func=lambda x: next(p['name'] for p in products if p['id'] == x))
-            with col2:
-                if st.button("✏️ Editar", use_container_width=True):
-                    st.session_state.editing_product_id = product_to_edit
-                    st.rerun()
-            
-            if st.button("🗑️ Eliminar Producto", type="secondary"):
-                st.session_state.confirm_delete_product = product_to_edit
-            
-            if 'confirm_delete_product' in st.session_state:
-                product = next(p for p in products if p['id'] == st.session_state.confirm_delete_product)
-                st.warning(f"⚠️ ¿Eliminar '{product['name']}'?")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("✅ Sí", type="primary"):
-                        delete_product(st.session_state.confirm_delete_product)
-                        del st.session_state.confirm_delete_product
-                        st.success("Eliminado")
-                        st.rerun()
-                with col2:
-                    if st.button("❌ No"):
-                        del st.session_state.confirm_delete_product
-                        st.rerun()
-        else:
-            st.info("No hay productos.")
-    
-    with tab2:
-        st.markdown("### 📁 CSV Sync")
-        if os.path.exists(PRODUCTS_CSV_PATH):
-            st.success(f"✅ Found: `{PRODUCTS_CSV_PATH}`")
-            try:
-                preview = pd.read_csv(PRODUCTS_CSV_PATH)
-                st.dataframe(preview.head(10), use_container_width=True)
-            except Exception as e:
-                st.error(f"Error: {e}")
-            
-            if st.button("🔄 Sync from CSV", type="primary"):
-                result, msg = sync_products_from_csv()
-                if result:
-                    st.success(msg)
-                    st.rerun()
-                else:
-                    st.error(msg)
-        else:
-            st.warning(f"⚠️ No `{PRODUCTS_CSV_PATH}` found")
-            if st.button("📄 Create Sample"):
-                create_sample_csv()
-                st.success("✅ Created")
-                st.rerun()
-    
-    with tab3:
-        editing = None
-        if st.session_state.editing_product_id:
-            products = get_products_for_dropdown()
-            editing = next((p for p in products if p['id'] == st.session_state.editing_product_id), None)
         
-        with st.form("product_form"):
-            st.markdown(f"#### {'✏️ Editar' if editing else '➕ Nuevo'} Producto")
-            name = st.text_input("Nombre *", value=editing['name'] if editing else "")
-            desc = st.text_area("Descripción", value=editing['description'] if editing else "")
-            price = st.number_input("Precio ($)", min_value=0.01, step=0.01, 
-                                   value=float(editing['unit_price']) if editing else 1.00)
+        if not products:
+            st.info("📭 No hay productos registrados. Usa la pestaña 'Agregar Producto' para crear productos.")
+            return
+        
+        # Display products table
+        df = pd.DataFrame(products).rename(columns={
+            'id': 'ID', 
+            'name': 'Nombre', 
+            'description': 'Descripción', 
+            'unit_price': 'Precio'
+        })
+        
+        st.dataframe(
+            df, 
+            column_config={"Precio": st.column_config.NumberColumn("Precio", format="$%.2f")},
+            hide_index=True, 
+            use_container_width=True
+        )
+        
+        st.info(f"📊 Total: {len(products)} productos")
+        st.markdown("---")
+        
+        # Product selection and actions
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            product_to_edit = st.selectbox(
+                "Seleccionar producto",
+                options=[p['id'] for p in products],
+                format_func=lambda x: next(p['name'] for p in products if p['id'] == x),
+                key="product_selector"
+            )
+        
+        with col2:
+            if st.button("✏️ Editar", use_container_width=True, key="edit_product_btn"):
+                st.session_state.editing_product_id = product_to_edit
+                st.rerun()
+        
+        # Show edit form if editing
+        if st.session_state.get('editing_product_id'):
+            product = next((p for p in products if p['id'] == st.session_state.editing_product_id), None)
             
-            col1, col2 = st.columns(2)
-            with col1:
-                submit = st.form_submit_button("✔️" + ("Actualizar" if editing else "Agregar"), 
-                                              use_container_width=True, type="primary")
-            with col2:
-                if editing and st.form_submit_button("❌ Cancelar", use_container_width=True):
-                    st.session_state.editing_product_id = None
-                    st.rerun()
-            
-            if submit and name and price > 0:
-                if editing:
-                    if update_product(editing['id'], name, desc, price):
-                        st.success(f"✅ '{name}' actualizado")
+            if product:
+                st.markdown("---")
+                st.markdown("### ✏️ Editar Producto")
+                
+                with st.form("edit_product_form"):
+                    name = st.text_input(
+                        "Nombre del Producto *",
+                        value=product['name'],
+                        placeholder="Ej: Viga de acero IPE 200",
+                        help="Nombre único del producto"
+                    )
+                    
+                    desc = st.text_area(
+                        "Descripción",
+                        value=product['description'],
+                        placeholder="Descripción detallada del producto",
+                        help="Información adicional sobre el producto (opcional)"
+                    )
+                    
+                    price = st.number_input(
+                        "Precio Unitario ($) *",
+                        min_value=0.01,
+                        step=0.01,
+                        value=float(product['unit_price']),
+                        format="%.2f",
+                        help="Precio por unidad en dólares"
+                    )
+                    
+                    st.markdown("---")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        submit = st.form_submit_button(
+                            "💾 Actualizar Producto",
+                            use_container_width=True,
+                            type="primary"
+                        )
+                    
+                    with col2:
+                        cancel = st.form_submit_button(
+                            "❌ Cancelar",
+                            use_container_width=True
+                        )
+                    
+                    if cancel:
                         st.session_state.editing_product_id = None
                         st.rerun()
-                    else:
-                        st.error("❌ Nombre duplicado")
+                    
+                    if submit:
+                        # Validation
+                        if not name or not name.strip():
+                            st.error("❌ El nombre del producto es obligatorio")
+                        elif price <= 0:
+                            st.error("❌ El precio debe ser mayor a 0")
+                        else:
+                            # Clean inputs
+                            name = name.strip()
+                            desc = desc.strip() if desc else ""
+                            
+                            try:
+                                success = update_product(product['id'], name, desc, price)
+                                
+                                if success:
+                                    st.success(f"✅ Producto '{name}' actualizado exitosamente")
+                                    st.session_state.editing_product_id = None
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Ya existe un producto con el nombre '{name}'")
+                            except Exception as e:
+                                st.error(f"❌ Error al actualizar: {str(e)}")
+            else:
+                st.error("❌ Producto no encontrado")
+                st.session_state.editing_product_id = None
+                st.rerun()
+        
+        # Delete product section (only show if not editing)
+        if not st.session_state.get('editing_product_id'):
+            st.markdown("---")
+            if st.button("🗑️ Eliminar Producto", type="secondary", key="delete_product_btn"):
+                st.session_state.confirm_delete_product = product_to_edit
+            
+            # Confirmation dialog for deletion
+            if st.session_state.get('confirm_delete_product'):
+                product = next((p for p in products if p['id'] == st.session_state.confirm_delete_product), None)
+                
+                if product:
+                    st.warning(f"⚠️ ¿Está seguro de eliminar '{product['name']}'? Esta acción no se puede deshacer.")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("✅ Sí, eliminar", type="primary", key="confirm_yes"):
+                            try:
+                                delete_product(st.session_state.confirm_delete_product)
+                                del st.session_state.confirm_delete_product
+                                st.success(f"✅ Producto '{product['name']}' eliminado exitosamente")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al eliminar: {str(e)}")
+                    
+                    with col2:
+                        if st.button("❌ Cancelar", key="confirm_no"):
+                            del st.session_state.confirm_delete_product
+                            st.rerun()
+    
+    # TAB 2: CSV Sync
+    with tab2:
+        st.markdown("### 📁 Sincronización desde CSV")
+        st.info("Importa productos desde un archivo CSV con columnas: **name**, **description**, **unit_price**")
+        
+        if os.path.exists(PRODUCTS_CSV_PATH):
+            st.success(f"✅ Archivo encontrado: `{PRODUCTS_CSV_PATH}`")
+            
+            try:
+                preview = pd.read_csv(PRODUCTS_CSV_PATH)
+                
+                # Validate CSV structure
+                required_cols = {'name', 'unit_price'}
+                csv_cols = set(preview.columns)
+                
+                if not required_cols.issubset(csv_cols):
+                    missing = required_cols - csv_cols
+                    st.error(f"❌ Columnas faltantes en CSV: {', '.join(missing)}")
+                    st.info("El CSV debe contener al menos: **name** y **unit_price**")
                 else:
-                    if add_product(name, desc, price):
-                        st.success(f"✅ '{name}' agregado")
-                        st.rerun()
-                    else:
-                        st.error("❌ Nombre duplicado")
+                    st.markdown("#### Vista previa (primeras 10 filas)")
+                    st.dataframe(preview.head(10), use_container_width=True)
+                    
+                    st.markdown(f"**Total de registros:** {len(preview)}")
+                    
+                    if st.button("🔄 Sincronizar desde CSV", type="primary", key="sync_csv_btn"):
+                        with st.spinner("Sincronizando productos..."):
+                            result, msg = sync_products_from_csv()
+                            
+                            if result:
+                                st.success(msg)
+                                st.balloons()
+                                st.rerun()
+                            else:
+                                st.error(msg)
+            
+            except pd.errors.EmptyDataError:
+                st.error("❌ El archivo CSV está vacío")
+            except pd.errors.ParserError:
+                st.error("❌ Error al leer el archivo CSV. Verifica el formato.")
+            except Exception as e:
+                st.error(f"❌ Error inesperado: {str(e)}")
+        
+        else:
+            st.warning(f"⚠️ No se encontró el archivo `{PRODUCTS_CSV_PATH}`")
+            st.markdown("Crea un archivo de ejemplo para comenzar")
+            
+            if st.button("📄 Crear archivo de ejemplo", type="primary", key="create_csv_btn"):
+                try:
+                    create_sample_csv()
+                    st.success(f"✅ Archivo `{PRODUCTS_CSV_PATH}` creado exitosamente")
+                    st.info("Puedes editar este archivo con Excel o cualquier editor de texto")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error al crear archivo: {str(e)}")
+    
+    # TAB 3: Add Product Only
+    with tab3:
+        st.markdown("### ➕ Agregar Nuevo Producto")
+        
+        with st.form("add_product_form", clear_on_submit=True):
+            name = st.text_input(
+                "Nombre del Producto *",
+                placeholder="Ej: Viga de acero IPE 200",
+                help="Nombre único del producto"
+            )
+            
+            desc = st.text_area(
+                "Descripción",
+                placeholder="Descripción detallada del producto",
+                help="Información adicional sobre el producto (opcional)"
+            )
+            
+            price = st.number_input(
+                "Precio Unitario ($) *",
+                min_value=0.01,
+                step=0.01,
+                value=1.00,
+                format="%.2f",
+                help="Precio por unidad en dólares"
+            )
+            
+            st.markdown("---")
+            
+            submit = st.form_submit_button(
+                "➕ Agregar Producto",
+                use_container_width=True,
+                type="primary"
+            )
+            
+            # Form submission handling
+            if submit:
+                # Validation
+                if not name or not name.strip():
+                    st.error("❌ El nombre del producto es obligatorio")
+                elif price <= 0:
+                    st.error("❌ El precio debe ser mayor a 0")
+                else:
+                    # Clean inputs
+                    name = name.strip()
+                    desc = desc.strip() if desc else ""
+                    
+                    try:
+                        new_id = add_product(name, desc, price)
+                        
+                        if new_id:
+                            st.success(f"✅ Producto '{name}' agregado exitosamente (ID: {new_id})")
+                            st.balloons()
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Ya existe un producto con el nombre '{name}'")
+                    except Exception as e:
+                        st.error(f"❌ Error al agregar: {str(e)}")
 
 def show_saved_quotes():
     if not st.session_state.current_client_id:
+        st.warning("⚠️ Seleccione un cliente primero para ver sus cotizaciones")
         return
     
     # Search & Filters
