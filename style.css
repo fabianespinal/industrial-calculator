@@ -47,13 +47,25 @@ html, body, [data-testid="stAppViewContainer"] {
 
 /* Sidebar inputs */
 [data-testid="stSidebar"] input,
-[data-testid="stSidebar"] textarea,
-[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div {
+[data-testid="stSidebar"] textarea {
     background-color: #ffffff !important;
     border: 1px solid #d1d5db !important;
     color: #111827 !important;
     border-radius: 6px !important;
-    padding: 0.45rem 0.6rem !important;
+    padding: 0.5rem 0.75rem !important;
+}
+
+/* Sidebar selectbox - less aggressive styling */
+[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div {
+    background-color: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    min-height: 38px;
+}
+
+/* Ensure selectbox text is visible */
+[data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] span {
+    color: #111827 !important;
 }
 
 /* Sidebar buttons */

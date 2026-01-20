@@ -1368,10 +1368,18 @@ def show_main_app():
             if not clients:
                 st.info("No hay clientes.")
             else:
-                client_names = [c["company_name"] for c in clients]
-                selected_idx = st.selectbox("Cliente:", range(len(client_names)), 
-                                            format_func=lambda i: client_names[i])
-                selected_client = clients[selected_idx]
+                # Create a simple list of company names with IDs
+                client_options = {f"{c['company_name']}": c['id'] for c in clients}
+                
+                selected_name = st.selectbox(
+                    "Cliente:", 
+                    options=list(client_options.keys()),
+                    key="client_selector"
+                )
+                
+                selected_client_id = client_options[selected_name]
+                selected_client = next(c for c in clients if c["id"] == selected_client_id)
+                st.session_state.current_client_id = selected_client_id
 
                 # Horizontal buttons
                 edit_col, select_col = st.columns(2)
