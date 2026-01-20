@@ -20,7 +20,7 @@ st.set_page_config(
 DB_PATH = "rigc_app.db"
 PRODUCTS_CSV_PATH = "products.csv"
 MAX_ATTEMPTS = 3
-USER_PASSCODES = {"fabian": "rams20", "admin": "admin123"}
+USER_PASSCODES = {"fabian": "samuel2", "metprord": "Gerencia2026"}
 
 # ----------------------------
 # DATABASE SETUP
@@ -1533,4 +1533,5 @@ def main():
         show_main_app()
 
 if __name__ == "__main__":
+
     main()
