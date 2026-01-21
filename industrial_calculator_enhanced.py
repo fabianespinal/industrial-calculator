@@ -95,16 +95,31 @@ def init_db():
             cur.execute("ALTER TABLE quote_items ADD COLUMN discount_type TEXT DEFAULT 'none'")
             cur.execute("ALTER TABLE quote_items ADD COLUMN discount_value REAL DEFAULT 0")
         
-        # Insert sample products if empty
-        cur.execute("SELECT COUNT(*) FROM products")
-        if cur.fetchone()[0] == 0:
-            samples = [
-                ("Steel Beam IPE 200", "European standard I-beam", 125.50),
-                ("Galvanized Sheet 2mm", "Corrosion-resistant roofing", 45.75),
-                ("Anchor Bolts M20", "Heavy-duty foundation bolts", 8.90),
-            ]
-            cur.executemany("INSERT INTO products (name, description, unit_price) VALUES (?, ?, ?)", samples)
         conn.commit()
+    
+    # Auto-sync products from CSV if file exists
+    if os.path.exists(PRODUCTS_CSV_PATH):
+        try:
+            result, msg = sync_products_from_csv()
+            if result:
+                print(f"✅ Products auto-synced from CSV: {msg}")
+        except Exception as e:
+            print(f"⚠️ Error auto-syncing from CSV: {str(e)}")
+    else:
+        # Only insert sample products if CSV doesn't exist AND products table is empty
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM products")
+            if cur.fetchone()[0] == 0:
+                print("⚠️ No products.csv found. Creating sample products...")
+                samples = [
+                    ("Steel Beam IPE 200", "European standard I-beam", 125.50),
+                    ("Galvanized Sheet 2mm", "Corrosion-resistant roofing", 45.75),
+                    ("Anchor Bolts M20", "Heavy-duty foundation bolts", 8.90),
+                ]
+                cur.executemany("INSERT INTO products (name, description, unit_price) VALUES (?, ?, ?)", samples)
+                conn.commit()
+                print("✅ Sample products created")
 
 if not os.path.exists(DB_PATH):
     init_db()
@@ -237,8 +252,11 @@ def get_all_quotes_for_client(client_id):
     return [dict(row) for row in quotes_rows]
 
 def get_products_for_dropdown():
-    rows = query_db("SELECT id, name, description, unit_price FROM products ORDER BY name", fetch_all=True)
-    return [dict(row) for row in rows]
+    with get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id, name, description, unit_price FROM products ORDER BY name")
+        rows = cur.fetchall()
+        return [dict(row) for row in rows]
 
 def add_product(name, description, unit_price):
     try:
@@ -662,238 +680,178 @@ def load_css(file_path):
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 # ----------------------------
-# MODULES
+# REPORTS MODULE
+# ----------------------------
+def show_reports_module():
+    st.markdown('<div class="section-header">📊 Reportes</div>', unsafe_allow_html=True)
+    
+    st.info("Módulo de reportes en desarrollo")
+    
+    # Add custom CSS for info cards
+    st.markdown("""
+    <style>
+    .info-card {
+        background: var(--background-color);
+        border: 1px solid var(--secondary-background-color);
+        border-radius: 8px;
+        padding: 1rem;
+        height: 100%;
+    }
+    .info-card-header {
+        font-size: 14px;
+        color: var(--text-color);
+        opacity: 0.8;
+        margin-bottom: 0.5rem;
+    }
+    .info-card-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: var(--text-color);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Mock report cards
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("""
+        <div class="info-card">
+            <div class="info-card-header">Total Cotizaciones</div>
+            <div class="info-card-value">25</div>
+            <div style="font-size: 12px; color: #2E8B57; margin-top: 0.5rem;">
+                ↑ 15% vs mes anterior
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div class="info-card">
+            <div class="info-card-header">Valor Total</div>
+            <div class="info-card-value">$125,450</div>
+            <div style="font-size: 12px; color: #2E8B57; margin-top: 0.5rem;">
+                ↑ 23% vs mes anterior
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class="info-card">
+            <div class="info-card-header">Tasa de Conversión</div>
+            <div class="info-card-value">68%</div>
+            <div style="font-size: 12px; color: #FF8C00; margin-top: 0.5rem;">
+                ↓ 5% vs mes anterior
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    st.markdown("### 📈 Próximamente")
+    st.caption("• Reportes por cliente\n• Histórico de cotizaciones\n• Análisis de productos más vendidos")
+
+# ----------------------------
+# PRODUCT MANAGER MODULE
 # ----------------------------
 def show_product_manager():
     st.markdown("---")
     st.markdown("## 📦 Gestión de Productos")
     
-    tab1, tab2, tab3 = st.tabs(["📋 Lista", "📁 CSV Sync", "➕ Agregar Producto"])
-    
-    # TAB 1: Product List
-    with tab1:
-        products = get_products_for_dropdown()
-        
-        if not products:
-            st.info("📭 No hay productos registrados. Usa la pestaña 'Agregar Producto' para crear productos.")
-            return
-        
-        # Display products table
-        df = pd.DataFrame(products).rename(columns={
-            'id': 'ID', 
-            'name': 'Nombre', 
-            'description': 'Descripción', 
-            'unit_price': 'Precio'
-        })
-        
-        st.dataframe(
-            df, 
-            column_config={"Precio": st.column_config.NumberColumn("Precio", format="$%.2f")},
-            hide_index=True, 
-            use_container_width=True
-        )
-        
-        st.info(f"📊 Total: {len(products)} productos")
-        st.markdown("---")
-        
-        # Product selection and actions
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            product_to_edit = st.selectbox(
-                "Seleccionar producto",
-                options=[p['id'] for p in products],
-                format_func=lambda x: next(p['name'] for p in products if p['id'] == x),
-                key="product_selector"
-            )
-        
-        with col2:
-            if st.button("✏️ Editar", use_container_width=True, key="edit_product_btn"):
-                st.session_state.editing_product_id = product_to_edit
-                st.rerun()
-        
-        # Show edit form if editing
-        if st.session_state.get('editing_product_id'):
-            product = next((p for p in products if p['id'] == st.session_state.editing_product_id), None)
-            
-            if product:
-                st.markdown("---")
-                st.markdown("### ✏️ Editar Producto")
-                
-                with st.form("edit_product_form"):
-                    name = st.text_input(
-                        "Nombre del Producto *",
-                        value=product['name'],
-                        placeholder="Ej: Viga de acero IPE 200",
-                        help="Nombre único del producto"
-                    )
-                    
-                    desc = st.text_area(
-                        "Descripción",
-                        value=product['description'],
-                        placeholder="Descripción detallada del producto",
-                        help="Información adicional sobre el producto (opcional)"
-                    )
-                    
-                    price = st.number_input(
-                        "Precio Unitario ($) *",
-                        min_value=0.01,
-                        step=0.01,
-                        value=float(product['unit_price']),
-                        format="%.2f",
-                        help="Precio por unidad en dólares"
-                    )
-                    
-                    st.markdown("---")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        submit = st.form_submit_button(
-                            "💾 Actualizar Producto",
-                            use_container_width=True,
-                            type="primary"
-                        )
-                    
-                    with col2:
-                        cancel = st.form_submit_button(
-                            "❌ Cancelar",
-                            use_container_width=True
-                        )
-                    
-                    if cancel:
-                        st.session_state.editing_product_id = None
-                        st.rerun()
-                    
-                    if submit:
-                        # Validation
-                        if not name or not name.strip():
-                            st.error("❌ El nombre del producto es obligatorio")
-                        elif price <= 0:
-                            st.error("❌ El precio debe ser mayor a 0")
-                        else:
-                            # Clean inputs
-                            name = name.strip()
-                            desc = desc.strip() if desc else ""
-                            
-                            try:
-                                success = update_product(product['id'], name, desc, price)
-                                
-                                if success:
-                                    st.success(f"✅ Producto '{name}' actualizado exitosamente")
-                                    st.session_state.editing_product_id = None
-                                    st.rerun()
-                                else:
-                                    st.error(f"❌ Ya existe un producto con el nombre '{name}'")
-                            except Exception as e:
-                                st.error(f"❌ Error al actualizar: {str(e)}")
+    # Action buttons row
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
+    with col1:
+        if st.button("➕ Agregar Producto", use_container_width=True, type="primary"):
+            st.session_state.show_add_product = True
+            st.session_state.editing_product_id = None
+    with col2:
+        if st.button("✏️ Editar Producto", use_container_width=True):
+            if st.session_state.get('selected_product_id'):
+                st.session_state.editing_product_id = st.session_state.selected_product_id
+                st.session_state.show_add_product = False
             else:
-                st.error("❌ Producto no encontrado")
-                st.session_state.editing_product_id = None
-                st.rerun()
-        
-        # Delete product section (only show if not editing)
-        if not st.session_state.get('editing_product_id'):
-            st.markdown("---")
-            if st.button("🗑️ Eliminar Producto", type="secondary", key="delete_product_btn"):
-                st.session_state.confirm_delete_product = product_to_edit
-            
-            # Confirmation dialog for deletion
-            if st.session_state.get('confirm_delete_product'):
-                product = next((p for p in products if p['id'] == st.session_state.confirm_delete_product), None)
-                
-                if product:
-                    st.warning(f"⚠️ ¿Está seguro de eliminar '{product['name']}'? Esta acción no se puede deshacer.")
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("✅ Sí, eliminar", type="primary", key="confirm_yes"):
-                            try:
-                                delete_product(st.session_state.confirm_delete_product)
-                                del st.session_state.confirm_delete_product
-                                st.success(f"✅ Producto '{product['name']}' eliminado exitosamente")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Error al eliminar: {str(e)}")
-                    
-                    with col2:
-                        if st.button("❌ Cancelar", key="confirm_no"):
-                            del st.session_state.confirm_delete_product
-                            st.rerun()
+                st.warning("⚠️ Seleccione un producto de la lista primero")
+    with col3:
+        if st.button("❌ Eliminar Producto", use_container_width=True, type="secondary"):
+            if st.session_state.get('selected_product_id'):
+                st.session_state.confirm_delete_product = st.session_state.selected_product_id
+            else:
+                st.warning("⚠️ Seleccione un producto de la lista primero")
+    with col4:
+        if st.button("🔄 Sincronizar CSV", use_container_width=True):
+            st.session_state.show_csv_sync = True
+            st.session_state.show_add_product = False
+            st.session_state.editing_product_id = None
     
-    # TAB 2: CSV Sync
-    with tab2:
+    st.markdown("---")
+    
+    # CSV Sync Section
+    if st.session_state.get('show_csv_sync'):
         st.markdown("### 📁 Sincronización desde CSV")
-        st.info("Importa productos desde un archivo CSV con columnas: **name**, **description**, **unit_price**")
-        
+        st.info("📋 Importa productos desde un archivo CSV con columnas: **name**, **description**, **unit_price**")
         if os.path.exists(PRODUCTS_CSV_PATH):
             st.success(f"✅ Archivo encontrado: `{PRODUCTS_CSV_PATH}`")
-            
             try:
                 preview = pd.read_csv(PRODUCTS_CSV_PATH)
-                
                 # Validate CSV structure
                 required_cols = {'name', 'unit_price'}
                 csv_cols = set(preview.columns)
-                
                 if not required_cols.issubset(csv_cols):
                     missing = required_cols - csv_cols
                     st.error(f"❌ Columnas faltantes en CSV: {', '.join(missing)}")
-                    st.info("El CSV debe contener al menos: **name** y **unit_price**")
+                    st.info("💡 El CSV debe contener al menos: **name** y **unit_price**")
                 else:
-                    st.markdown("#### Vista previa (primeras 10 filas)")
-                    st.dataframe(preview.head(10), use_container_width=True)
-                    
-                    st.markdown(f"**Total de registros:** {len(preview)}")
-                    
-                    if st.button("🔄 Sincronizar desde CSV", type="primary", key="sync_csv_btn"):
-                        with st.spinner("Sincronizando productos..."):
-                            result, msg = sync_products_from_csv()
-                            
-                            if result:
-                                st.success(msg)
-                                st.balloons()
-                                st.rerun()
-                            else:
-                                st.error(msg)
-            
+                    st.markdown(f"#### 📊 Vista previa - Total: {len(preview)} registros")
+                    st.dataframe(preview, use_container_width=True, height=400)
+                    col1, col2 = st.columns([1, 3])
+                    with col1:
+                        if st.button("✅ Sincronizar Ahora", type="primary", use_container_width=True):
+                            with st.spinner("Sincronizando productos..."):
+                                result, msg = sync_products_from_csv()
+                                if result:
+                                    st.success(msg)
+                                    st.balloons()
+                                    st.session_state.show_csv_sync = False
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+                    with col2:
+                        if st.button("❌ Cancelar", use_container_width=True):
+                            st.session_state.show_csv_sync = False
+                            st.rerun()
             except pd.errors.EmptyDataError:
                 st.error("❌ El archivo CSV está vacío")
             except pd.errors.ParserError:
                 st.error("❌ Error al leer el archivo CSV. Verifica el formato.")
             except Exception as e:
                 st.error(f"❌ Error inesperado: {str(e)}")
-        
         else:
             st.warning(f"⚠️ No se encontró el archivo `{PRODUCTS_CSV_PATH}`")
-            st.markdown("Crea un archivo de ejemplo para comenzar")
-            
-            if st.button("📄 Crear archivo de ejemplo", type="primary", key="create_csv_btn"):
+            st.info("💡 Crea un archivo de ejemplo para comenzar")
+            if st.button("📄 Crear Archivo de Ejemplo", type="primary"):
                 try:
                     create_sample_csv()
                     st.success(f"✅ Archivo `{PRODUCTS_CSV_PATH}` creado exitosamente")
-                    st.info("Puedes editar este archivo con Excel o cualquier editor de texto")
+                    st.info("📝 Puedes editar este archivo con Excel o cualquier editor de texto")
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error al crear archivo: {str(e)}")
+        st.markdown("---")
     
-    # TAB 3: Add Product Only
-    with tab3:
+    # Add Product Form
+    if st.session_state.get('show_add_product'):
         st.markdown("### ➕ Agregar Nuevo Producto")
-        
-        with st.form("add_product_form", clear_on_submit=True):
+        with st.form("add_product_form"):
             name = st.text_input(
                 "Nombre del Producto *",
                 placeholder="Ej: Viga de acero IPE 200",
                 help="Nombre único del producto"
             )
-            
             desc = st.text_area(
                 "Descripción",
                 placeholder="Descripción detallada del producto",
                 help="Información adicional sobre el producto (opcional)"
             )
-            
             price = st.number_input(
                 "Precio Unitario ($) *",
                 min_value=0.01,
@@ -902,39 +860,171 @@ def show_product_manager():
                 format="%.2f",
                 help="Precio por unidad en dólares"
             )
-            
             st.markdown("---")
-            
-            submit = st.form_submit_button(
-                "➕ Agregar Producto",
-                use_container_width=True,
-                type="primary"
-            )
-            
-            # Form submission handling
+            col1, col2 = st.columns(2)
+            with col1:
+                submit = st.form_submit_button("✅ Guardar Producto", use_container_width=True, type="primary")
+            with col2:
+                cancel = st.form_submit_button("❌ Cancelar", use_container_width=True)
+            if cancel:
+                st.session_state.show_add_product = False
+                st.rerun()
             if submit:
-                # Validation
                 if not name or not name.strip():
                     st.error("❌ El nombre del producto es obligatorio")
                 elif price <= 0:
                     st.error("❌ El precio debe ser mayor a 0")
                 else:
-                    # Clean inputs
                     name = name.strip()
                     desc = desc.strip() if desc else ""
-                    
                     try:
                         new_id = add_product(name, desc, price)
-                        
                         if new_id:
                             st.success(f"✅ Producto '{name}' agregado exitosamente (ID: {new_id})")
                             st.balloons()
+                            st.session_state.show_add_product = False
                             st.rerun()
                         else:
                             st.error(f"❌ Ya existe un producto con el nombre '{name}'")
                     except Exception as e:
                         st.error(f"❌ Error al agregar: {str(e)}")
+        st.markdown("---")
+    
+    # Edit Product Form
+    if st.session_state.get('editing_product_id'):
+        products = get_products_for_dropdown()
+        product = next((p for p in products if p['id'] == st.session_state.editing_product_id), None)
+        if product:
+            st.markdown("### ✏️ Editar Producto")
+            with st.form("edit_product_form"):
+                name = st.text_input(
+                    "Nombre del Producto *",
+                    value=product['name'],
+                    placeholder="Ej: Viga de acero IPE 200",
+                    help="Nombre único del producto"
+                )
+                desc = st.text_area(
+                    "Descripción",
+                    value=product['description'],
+                    placeholder="Descripción detallada del producto",
+                    help="Información adicional sobre el producto (opcional)"
+                )
+                price = st.number_input(
+                    "Precio Unitario ($) *",
+                    min_value=0.01,
+                    step=0.01,
+                    value=float(product['unit_price']),
+                    format="%.2f",
+                    help="Precio por unidad en dólares"
+                )
+                st.markdown("---")
+                col1, col2 = st.columns(2)
+                with col1:
+                    submit = st.form_submit_button("✅ Actualizar Producto", use_container_width=True, type="primary")
+                with col2:
+                    cancel = st.form_submit_button("❌ Cancelar", use_container_width=True)
+                if cancel:
+                    st.session_state.editing_product_id = None
+                    st.rerun()
+                if submit:
+                    if not name or not name.strip():
+                        st.error("❌ El nombre del producto es obligatorio")
+                    elif price <= 0:
+                        st.error("❌ El precio debe ser mayor a 0")
+                    else:
+                        name = name.strip()
+                        desc = desc.strip() if desc else ""
+                        try:
+                            success = update_product(product['id'], name, desc, price)
+                            if success:
+                                st.success(f"✅ Producto '{name}' actualizado exitosamente")
+                                st.session_state.editing_product_id = None
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Ya existe un producto con el nombre '{name}'")
+                        except Exception as e:
+                            st.error(f"❌ Error al actualizar: {str(e)}")
+        else:
+            st.error("❌ Producto no encontrado")
+            st.session_state.editing_product_id = None
+            st.rerun()
+        st.markdown("---")
+    
+    # Delete Confirmation
+    if st.session_state.get('confirm_delete_product'):
+        products = get_products_for_dropdown()
+        product = next((p for p in products if p['id'] == st.session_state.confirm_delete_product), None)
+        if product:
+            st.warning(f"⚠️ ¿Está seguro de eliminar '{product['name']}'? Esta acción no se puede deshacer.")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("✅ Sí, Eliminar", type="primary", use_container_width=True):
+                    try:
+                        delete_product(st.session_state.confirm_delete_product)
+                        del st.session_state.confirm_delete_product
+                        st.success(f"✅ Producto '{product['name']}' eliminado exitosamente")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al eliminar: {str(e)}")
+            with col2:
+                if st.button("❌ Cancelar", use_container_width=True):
+                    del st.session_state.confirm_delete_product
+                    st.rerun()
+        st.markdown("---")
+    
+    # Products List (ONLY ONCE)
+    st.markdown("### 📋 Lista de Productos")
+    products = get_products_for_dropdown()
+    if not products:
+        st.info("📭 No hay productos registrados. Usa el botón 'Agregar Producto' para crear productos.")
+        return
+    
+    # Search bar
+    search_query = st.text_input(
+        "🔍 Buscar producto",
+        placeholder="Buscar por nombre o descripción...",
+        key="product_search"
+    )
+    
+    # Filter products
+    if search_query:
+        filtered_products = [
+            p for p in products
+            if search_query.lower() in p['name'].lower()
+            or search_query.lower() in str(p.get('description', '')).lower()
+        ]
+    else:
+        filtered_products = products
+    
+    # Display table
+    if filtered_products:
+        df = pd.DataFrame(filtered_products).rename(columns={
+            'id': 'ID',
+            'name': 'Nombre',
+            'description': 'Descripción',
+            'unit_price': 'Precio'
+        })
+        # Interactive table with selection
+        event = st.dataframe(
+            df,
+            column_config={"Precio": st.column_config.NumberColumn("Precio", format="$%.2f")},
+            hide_index=True,
+            use_container_width=True,
+            height=400,
+            on_select="rerun",
+            selection_mode="single-row"
+        )
+        # Handle selection
+        if event.selection.rows:
+            selected_idx = event.selection.rows[0]
+            st.session_state.selected_product_id = df.iloc[selected_idx]['ID']
+        st.info(f"📊 Mostrando {len(filtered_products)} de {len(products)} productos")
+    else:
+        st.warning(f"⚠️ No se encontraron productos con '{search_query}'")
 
+# ----------------------------
+# QUOTE MANAGEMENT MODULES
+# ----------------------------
 def show_saved_quotes():
     if not st.session_state.current_client_id:
         st.warning("⚠️ Seleccione un cliente primero para ver sus cotizaciones")
@@ -943,62 +1033,53 @@ def show_saved_quotes():
     # Search & Filters
     search = st.text_input("🔍 Buscar", value=st.session_state.global_search_query, key="search")
     st.session_state.global_search_query = search.lower().strip()
-    
     with st.expander("Filtros"):
         col1, col2 = st.columns(2)
         with col1:
-            status = st.selectbox("Estado", ["All", "Draft", "Invoiced"], 
-                                key="filter_status_select")
+            status = st.selectbox("Estado", ["All", "Draft", "Invoiced"],
+                                  key="filter_status_select")
         with col2:
             if st.button("🧹 Limpiar"):
                 st.session_state.filter_status = "All"
                 st.session_state.global_search_query = ""
                 st.rerun()
-    
-    st.session_state.filter_status = status
+        st.session_state.filter_status = status
     
     # Get and filter quotes
     all_quotes = get_all_quotes_for_client(st.session_state.current_client_id)
-    
     filtered = []
     for q in all_quotes:
         if st.session_state.filter_status != "All" and q['status'] != st.session_state.filter_status:
             continue
-        
         if st.session_state.global_search_query:
             query = st.session_state.global_search_query
-            if not (query in q['quote_id'].lower() or 
-                   query in q.get('project_name', '').lower() or
-                   query in q.get('notes', '').lower()):
+            if not (query in q['quote_id'].lower() or
+                    query in q.get('project_name', '').lower() or
+                    query in q.get('notes', '').lower()):
                 continue
-        
         filtered.append(q)
     
-    # Display quotes
+    # Display filtered quotes
     if filtered:
+        st.info(f"📊 Mostrando {len(filtered)} de {len(all_quotes)} cotizaciones")
+        # Display quotes
         for q in filtered:
             with st.expander(f"{q['quote_id']} - {q['project_name']} (${q['total_amount']:,.2f}) - {q['status']}"):
                 st.write(f"**Fecha:** {q['date']}")
-                
                 quote_data, items = get_quote_by_id(q["quote_id"])
                 client_data = get_client_by_id(st.session_state.current_client_id)
-                
                 try:
                     charges = ast.literal_eval(quote_data["included_charges"])
                 except:
                     charges = {k: True for k in ['supervision','admin','insurance','transport','contingency']}
-                
                 totals = calculate_quote(items, charges)
-                
                 # Items table
                 if items:
                     items_df = pd.DataFrame(items)[['product_name', 'quantity', 'unit_price']]
                     items_df['total'] = items_df['quantity'] * items_df['unit_price']
                     st.dataframe(items_df, use_container_width=True, hide_index=True)
-                
                 if q["status"] == "Draft":
                     col1, col2, col3, col4 = st.columns(4)
-                    
                     with col1:
                         if st.button("✏️ Editar", key=f"edit_{q['quote_id']}", use_container_width=True):
                             st.session_state.editing_quote_id = q['quote_id']
@@ -1006,19 +1087,16 @@ def show_saved_quotes():
                             st.session_state.quote_products = items
                             st.session_state.included_charges = charges
                             st.rerun()
-                    
                     with col2:
                         if st.button("🔄 Duplicar", key=f"dup_{q['quote_id']}", use_container_width=True):
                             new_id = duplicate_quote(q['quote_id'])
                             if new_id:
                                 st.success(f"✅ Duplicado: {new_id}")
                                 st.rerun()
-                    
                     with col3:
                         if st.button("🕰️ Historial", key=f"hist_{q['quote_id']}", use_container_width=True):
                             st.session_state.viewing_history_for = q['quote_id']
                             st.rerun()
-                    
                     with col4:
                         pdf = QuotePDF()
                         pdf.add_page()
@@ -1027,17 +1105,13 @@ def show_saved_quotes():
                         pdf.cost_summary(totals, charges)
                         if quote_data.get('notes'):
                             pdf.notes_section(quote_data['notes'])
-                        
                         raw = pdf.output(dest="S")
                         pdf_bytes = raw.encode("latin-1") if isinstance(raw, str) else bytes(raw)
-                        
                         st.download_button("📄 PDF", pdf_bytes, f"{q['quote_id']}_cotizacion.pdf",
-                                         "application/pdf", use_container_width=True, key=f"dl_{q['quote_id']}")
-                    
+                                           "application/pdf", use_container_width=True, key=f"dl_{q['quote_id']}")
                     st.markdown("---")
                     if st.button("🖨️ Convertir a Factura", key=f"inv_{q['quote_id']}", use_container_width=True):
                         st.session_state.confirm_convert = q["quote_id"]
-                    
                     if st.session_state.get('confirm_convert') == q["quote_id"]:
                         st.warning(f"⚠️ ¿Convertir {q['quote_id']} en factura?")
                         col_a, col_b = st.columns(2)
@@ -1048,13 +1122,11 @@ def show_saved_quotes():
                                 del st.session_state.confirm_convert
                                 st.rerun()
                         with col_b:
-                            if st.button("❌ No", key=f"canc_{q['quote_id']}", use_container_width=True):
+                            if st.button("❌ No", key=f"canc_{q['quote_id']}"):
                                 del st.session_state.confirm_convert
                                 st.rerun()
-                    
                     if st.button(f"🗑️ Eliminar", key=f"del_{q['quote_id']}", type="secondary"):
                         st.session_state.confirm_delete_quote = q["quote_id"]
-                    
                     if st.session_state.get('confirm_delete_quote') == q["quote_id"]:
                         st.error(f"⚠️ ¿Eliminar {q['quote_id']}?")
                         col_a, col_b = st.columns(2)
@@ -1068,7 +1140,6 @@ def show_saved_quotes():
                             if st.button("❌ Cancelar", key=f"xdel_{q['quote_id']}"):
                                 del st.session_state.confirm_delete_quote
                                 st.rerun()
-                
                 elif q["status"] == "Invoiced":
                     pdf = InvoicePDF()
                     pdf.add_page()
@@ -1077,16 +1148,12 @@ def show_saved_quotes():
                     pdf.cost_summary(totals, charges)
                     if quote_data.get('notes'):
                         pdf.notes_section(quote_data['notes'])
-                    
                     raw = pdf.output(dest="S")
                     pdf_bytes = raw.encode("latin-1") if isinstance(raw, str) else bytes(raw)
-                    
                     st.download_button("📥 Descargar Factura", pdf_bytes, f"{q['quote_id']}_factura.pdf",
-                                     "application/pdf", use_container_width=True, key=f"dl_inv_{q['quote_id']}")
-                    
+                                       "application/pdf", use_container_width=True, key=f"dl_inv_{q['quote_id']}")
                     if st.button(f"🗑️ Eliminar Factura", key=f"del_inv_{q['quote_id']}", type="secondary"):
                         st.session_state.confirm_delete_invoice = q["quote_id"]
-                    
                     if st.session_state.get('confirm_delete_invoice') == q["quote_id"]:
                         st.error(f"⚠️ ¿Eliminar factura {q['quote_id']}?")
                         col_a, col_b = st.columns(2)
@@ -1101,11 +1168,10 @@ def show_saved_quotes():
                                 del st.session_state.confirm_delete_invoice
                                 st.rerun()
     else:
-        st.info("No hay cotizaciones guardadas")
+        st.info("📭 No hay cotizaciones que coincidan con los filtros")
 
 def show_quote_form():
     st.markdown("Información de la Cotización")
-    
     if st.session_state.editing_quote_id:
         st.info(f"✏️ Editando: {st.session_state.editing_quote_id}")
         if st.button("❌ Cancelar Edición"):
@@ -1122,40 +1188,34 @@ def show_quote_form():
             client_name = st.text_input("Cliente", value=client['company_name'], disabled=True)
         else:
             client_name = st.text_input("Cliente", placeholder="Seleccione cliente")
-    
     with col2:
         default_project = st.session_state.editing_quote_data.get('project_name', '') if st.session_state.editing_quote_data else ''
         project_name = st.text_input("Proyecto", value=default_project)
-    
     default_notes = st.session_state.editing_quote_data.get('notes', '') if st.session_state.editing_quote_data else ''
     notes = st.text_area("Notas", value=default_notes)
     
     # Add products
     st.markdown("Agregar Producto")
     products_list = get_products_for_dropdown()
-    
     if products_list:
         col1, col2 = st.columns([3, 2])
         with col1:
             selected_id = st.selectbox("Desde catálogo", options=[p["id"] for p in products_list],
-                format_func=lambda x: next(p["name"] for p in products_list if p["id"] == x))
+                                       format_func=lambda x: next(p["name"] for p in products_list if p["id"] == x))
             prod = next(p for p in products_list if p["id"] == selected_id)
-        
         with col2:
             qty = st.number_input("Cantidad", min_value=0.0, step=1.0, key="db_qty")
-        
         col1, col2, col3 = st.columns(3)
         with col1:
             add_disc = st.checkbox("Descuento", key="db_disc")
-        if add_disc:
-            with col2:
-                disc_type = st.selectbox("Tipo", ["percentage", "fixed"],
-                    format_func=lambda x: "%" if x == "percentage" else "$", key="db_disc_type")
-            with col3:
-                disc_val = st.number_input("Valor", min_value=0.0, step=0.1, key="db_disc_val")
-        else:
-            disc_type, disc_val = "none", 0.0
-        
+            if add_disc:
+                with col2:
+                    disc_type = st.selectbox("Tipo", ["percentage", "fixed"],
+                                             format_func=lambda x: "%" if x == "percentage" else "$", key="db_disc_type")
+                with col3:
+                    disc_val = st.number_input("Valor", min_value=0.0, step=0.1, key="db_disc_val")
+            else:
+                disc_type, disc_val = "none", 0.0
         if st.button("➕ Agregar desde Catálogo"):
             if qty > 0:
                 st.session_state.quote_products.append({
@@ -1171,7 +1231,6 @@ def show_quote_form():
         name = col1.text_input("Nombre")
         qty_m = col2.number_input("Cantidad", min_value=0.0, step=1.0)
         price = col3.number_input("Precio", min_value=0.0, step=0.01)
-        
         if st.form_submit_button("➕ Agregar Manual") and name and qty_m > 0 and price > 0:
             st.session_state.quote_products.append({
                 "product_name": name, "quantity": qty_m, "unit_price": price,
@@ -1183,113 +1242,105 @@ def show_quote_form():
     if st.session_state.quote_products:
         for p in st.session_state.quote_products:
             p['discount_amount'] = calculate_item_discount(p.get('unit_price', 0), p.get('quantity', 0),
-                p.get('discount_type', 'none'), p.get('discount_value', 0))
+                                                          p.get('discount_type', 'none'), p.get('discount_value', 0))
             p['subtotal'] = (p.get('quantity', 0) * p.get('unit_price', 0)) - p['discount_amount']
-        
         df = pd.DataFrame(st.session_state.quote_products)
-        
-        edited = st.data_editor(df, 
-            column_config={
-                "product_name": "Producto",
-                "quantity": st.column_config.NumberColumn("Cant.", format="%.2f"),
-                "unit_price": st.column_config.NumberColumn("Precio", format="$%.2f"),
-                "discount_type": st.column_config.SelectboxColumn("Desc.Tipo", options=["none", "percentage", "fixed"]),
-                "discount_value": st.column_config.NumberColumn("Desc.Val", format="%.2f"),
-                "discount_amount": st.column_config.NumberColumn("Desc.$", format="$%.2f"),
-                "subtotal": st.column_config.NumberColumn("Total", format="$%.2f")
-            },
-            hide_index=True,
-            use_container_width=True,
-            num_rows="dynamic",
-            key="products_editor"
-        )
-        
+        edited = st.data_editor(df,
+                                column_config={
+                                    "product_name": "Producto",
+                                    "quantity": st.column_config.NumberColumn("Cant.", format="%.2f"),
+                                    "unit_price": st.column_config.NumberColumn("Precio", format="$%.2f"),
+                                    "discount_type": st.column_config.SelectboxColumn("Desc.Tipo", options=["none", "percentage", "fixed"]),
+                                    "discount_value": st.column_config.NumberColumn("Desc.Val", format="%.2f"),
+                                    "discount_amount": st.column_config.NumberColumn("Desc.$", format="$%.2f"),
+                                    "subtotal": st.column_config.NumberColumn("Total", format="$%.2f")
+                                },
+                                hide_index=True,
+                                use_container_width=True,
+                                num_rows="dynamic",
+                                key="products_editor"
+                                )
         st.session_state.quote_products = edited.to_dict('records')
-        
-        # Charges
-        st.markdown("### ⚙️ Cargos Adicionales")
-        cols = st.columns(5)
-        charges = st.session_state.included_charges
-        charges['supervision'] = cols[0].checkbox("Supervisión (10%)", value=charges['supervision'])
-        charges['admin'] = cols[1].checkbox("Admin (4%)", value=charges['admin'])
-        charges['insurance'] = cols[2].checkbox("Seguro (1%)", value=charges['insurance'])
-        charges['transport'] = cols[3].checkbox("Transporte (3%)", value=charges['transport'])
-        charges['contingency'] = cols[4].checkbox("Imprevisto (3%)", value=charges['contingency'])
-        
-        totals = calculate_quote(st.session_state.quote_products, charges)
-        
-        # Summary
-        st.markdown("### 💰 Resumen")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Items", f"${totals['items_total']:,.2f}")
-            if totals['total_discounts'] > 0:
-                st.metric("Descuentos", f"-${totals['total_discounts']:,.2f}")
-        with c2:
-            st.metric("Subtotal", f"${totals['subtotal_general']:,.2f}")
-            st.metric("ITBIS (18%)", f"${totals['itbis']:,.2f}")
-        with c3:
-            st.markdown(f"""
-            <div style="background:rgba(18,18,36,0.7); padding:1rem; border-radius:16px; text-align:center;">
-            <div style="font-size:20px; font-weight:600; color:#4deeea;">TOTAL</div>
-            <div style="font-size:36px; font-weight:700; color:white;">${totals['grand_total']:,.2f}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Save/Clear buttons
-        col1, col2 = st.columns(2)
-        with col1:
-            btn_text = "💾 Actualizar" if st.session_state.editing_quote_id else "💾 Guardar"
-            if st.button(btn_text, type="primary", use_container_width=True):
-                if not st.session_state.current_client_id:
-                    st.error("Seleccione un cliente")
-                    return
-                
-                if st.session_state.editing_quote_id:
-                    # Save snapshot before update
-                    current_quote, current_items = get_quote_by_id(st.session_state.editing_quote_id)
-                    if current_quote:
-                        save_quote_snapshot(st.session_state.editing_quote_id, 
-                                          {"quote": current_quote, "items": current_items})
-                    
-                    # Update
-                    with get_db_connection() as conn:
-                        cur = conn.cursor()
-                        cur.execute("""UPDATE quotes SET project_name = ?, notes = ?, total_amount = ?, 
-                                     included_charges = ? WHERE quote_id = ?""",
-                                  (project_name, notes, totals['grand_total'], str(charges), 
-                                   st.session_state.editing_quote_id))
-                        cur.execute("DELETE FROM quote_items WHERE quote_id = ?", 
-                                  (st.session_state.editing_quote_id,))
-                        for item in st.session_state.quote_products:
-                            cur.execute("""INSERT INTO quote_items (quote_id, product_name, quantity, unit_price, 
-                                         discount_type, discount_value, auto_imported) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                                      (st.session_state.editing_quote_id, item["product_name"], item["quantity"],
-                                       item["unit_price"], item.get("discount_type", "none"),
-                                       item.get("discount_value", 0), 0))
-                        conn.commit()
-                    
-                    st.success(f"✅ Actualizado: {st.session_state.editing_quote_id}")
-                    st.session_state.editing_quote_id = None
-                    st.session_state.editing_quote_data = None
-                    st.session_state.quote_products = []
-                    st.rerun()
-                else:
-                    # New quote
-                    quote_id = save_quote_to_db(st.session_state.current_client_id, project_name,
-                        st.session_state.quote_products, totals['grand_total'], notes, charges)
-                    st.success(f"✅ Guardado: {quote_id}")
-                    st.session_state.quote_products = []
-                    st.rerun()
-        
+    
+    # Charges
+    st.markdown("### ⚙️ Cargos Adicionales")
+    cols = st.columns(5)
+    charges = st.session_state.included_charges
+    charges['supervision'] = cols[0].checkbox("Supervisión (10%)", value=charges['supervision'])
+    charges['admin'] = cols[1].checkbox("Admin (4%)", value=charges['admin'])
+    charges['insurance'] = cols[2].checkbox("Seguro (1%)", value=charges['insurance'])
+    charges['transport'] = cols[3].checkbox("Transporte (3%)", value=charges['transport'])
+    charges['contingency'] = cols[4].checkbox("Imprevisto (3%)", value=charges['contingency'])
+    totals = calculate_quote(st.session_state.quote_products, charges)
+    
+    # Summary
+    st.markdown("### 💰 Resumen")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Items", f"${totals['items_total']:,.2f}")
+        if totals['total_discounts'] > 0:
+            st.metric("Descuentos", f"-${totals['total_discounts']:,.2f}")
+    with c2:
+        st.metric("Subtotal", f"${totals['subtotal_general']:,.2f}")
+        st.metric("ITBIS (18%)", f"${totals['itbis']:,.2f}")
+    with c3:
+        st.markdown(f"""
+        <div style="background:rgba(18,18,36,0.7); padding:1rem; border-radius:16px; text-align:center;">
+        <div style="font-size:20px; font-weight:600; color:#4deeea;">TOTAL</div>
+        <div style="font-size:36px; font-weight:700; color:white;">${totals['grand_total']:,.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Save/Clear buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        btn_text = "💾 Actualizar" if st.session_state.editing_quote_id else "💾 Guardar"
+        if st.button(btn_text, type="primary", use_container_width=True):
+            if not st.session_state.current_client_id:
+                st.error("Seleccione un cliente")
+                return
+            if st.session_state.editing_quote_id:
+                # Save snapshot before update
+                current_quote, current_items = get_quote_by_id(st.session_state.editing_quote_id)
+                if current_quote:
+                    save_quote_snapshot(st.session_state.editing_quote_id,
+                                        {"quote": current_quote, "items": current_items})
+                # Update
+                with get_db_connection() as conn:
+                    cur = conn.cursor()
+                    cur.execute("""UPDATE quotes SET project_name = ?, notes = ?, total_amount = ?,
+                                included_charges = ? WHERE quote_id = ?""",
+                                (project_name, notes, totals['grand_total'], str(charges),
+                                 st.session_state.editing_quote_id))
+                    cur.execute("DELETE FROM quote_items WHERE quote_id = ?",
+                                (st.session_state.editing_quote_id,))
+                    for item in st.session_state.quote_products:
+                        cur.execute("""INSERT INTO quote_items (quote_id, product_name, quantity, unit_price,
+                                    discount_type, discount_value, auto_imported) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                    (st.session_state.editing_quote_id, item["product_name"], item["quantity"],
+                                     item["unit_price"], item.get("discount_type", "none"),
+                                     item.get("discount_value", 0), 0))
+                    conn.commit()
+                st.success(f"✅ Actualizado: {st.session_state.editing_quote_id}")
+                st.session_state.editing_quote_id = None
+                st.session_state.editing_quote_data = None
+                st.session_state.quote_products = []
+                st.rerun()
+            else:
+                # New quote
+                quote_id = save_quote_to_db(st.session_state.current_client_id, project_name,
+                                            st.session_state.quote_products, totals['grand_total'], notes, charges)
+                st.success(f"✅ Guardado: {quote_id}")
+                st.session_state.quote_products = []
+                st.rerun()
         with col2:
             if st.button("🔄 Limpiar", use_container_width=True):
                 st.session_state.quote_products = []
                 st.session_state.editing_quote_id = None
                 st.session_state.editing_quote_data = None
                 st.rerun()
-    else:
-        st.info("👆 Agregue productos")
+            else:
+             st.info("👆 Agregue productos")
 
 # ----------------------------
 # SESSION STATE INIT
@@ -1303,6 +1354,7 @@ def init_session_state():
         'quote_products': [],
         'included_charges': {'supervision': True, 'admin': True, 'insurance': True, 'transport': True, 'contingency': True},
         'show_product_manager': False,
+        'show_reports': False,  # ← ADDED
         'editing_product_id': None,
         'editing_quote_id': None,
         'editing_quote_data': None,
@@ -1326,7 +1378,6 @@ def show_login_page():
             st.image("logo.png", width=120)  # Adjust width as needed
         else:
             st.markdown('<div style="font-size:72px; text-align:center;">🏗️</div>', unsafe_allow_html=True)
-    
     st.markdown(
         '<div style="text-align:center; font-size:40px; font-weight:800; color:#111827; margin-top: 1rem;">METPRO ERP</div>',
         unsafe_allow_html=True
@@ -1335,11 +1386,9 @@ def show_login_page():
         '<div style="text-align:center; color:#4b5563; font-size:14px; margin-bottom:2rem;">Sistema de Gestión Empresarial</div>',
         unsafe_allow_html=True
     )
-    
     if st.session_state.attempts >= MAX_ATTEMPTS:
         st.error("⚠️ Máximo de intentos alcanzado")
         return
-    
     with st.form("login_form"):
         username = st.text_input("👤 Usuario")
         password = st.text_input("🔒 Contraseña", type="password")
@@ -1362,7 +1411,6 @@ def show_main_app():
     with st.sidebar:
         st.header("👥 Gestión de Clientes")
         mode = st.radio("Modo:", ["Seleccionar Cliente", "Nuevo Cliente"])
-        
         if mode == "Seleccionar Cliente":
             clients = get_all_clients()
             if not clients:
@@ -1370,17 +1418,14 @@ def show_main_app():
             else:
                 # Create a simple list of company names with IDs
                 client_options = {f"{c['company_name']}": c['id'] for c in clients}
-                
                 selected_name = st.selectbox(
-                    "Cliente:", 
+                    "Cliente:",
                     options=list(client_options.keys()),
                     key="client_selector"
                 )
-                
                 selected_client_id = client_options[selected_name]
                 selected_client = next(c for c in clients if c["id"] == selected_client_id)
                 st.session_state.current_client_id = selected_client_id
-
                 # Horizontal buttons
                 edit_col, select_col = st.columns(2)
                 with edit_col:
@@ -1391,7 +1436,6 @@ def show_main_app():
                     if st.button("Seleccionar", use_container_width=True):
                         st.session_state.current_client_id = selected_client["id"]
                         st.rerun()
-
                 # Edit form (only if editing this client)
                 if st.session_state.get('editing_client_id') == selected_client["id"]:
                     st.markdown("### 📝 Editar Cliente")
@@ -1403,15 +1447,13 @@ def show_main_app():
                         address = st.text_area("Dirección", value=selected_client.get("address") or "")
                         tax_id = st.text_input("RNC/Cédula", value=selected_client.get("tax_id") or "")
                         notes = st.text_area("Notas", value=selected_client.get("notes") or "")
-                        
                         col_save, col_cancel = st.columns(2)
                         with col_save:
-                            save_clicked = st.form_submit_button("💾 Guardar Cambios", type="primary")
+                            save_clicked = st.form_submit_button("Guardar Cambios", type="primary")
                         with col_cancel:
                             if st.form_submit_button("❌ Cancelar"):
                                 del st.session_state.editing_client_id
                                 st.rerun()
-                        
                         if save_clicked:
                             if company.strip():
                                 update_client(
@@ -1433,7 +1475,6 @@ def show_main_app():
                 address = st.text_area("Dirección")
                 tax_id = st.text_input("RNC/Cédula")
                 notes = st.text_area("Notas")
-                
                 if st.form_submit_button("🟥 Guardar Cliente"):
                     if company:
                         cid = add_client(company, contact, email, phone, address, tax_id, notes)
@@ -1442,11 +1483,11 @@ def show_main_app():
                         st.rerun()
                     else:
                         st.error("Empresa requerida.")
-        
         st.markdown("---")
         if st.button("📦 Gestión de Productos", use_container_width=True):
             st.session_state.show_product_manager = not st.session_state.show_product_manager
-        
+        if st.button("📊 Reportes", use_container_width=True):  # ← BUTTON ADDED
+            st.session_state.show_reports = not st.session_state.get('show_reports', False)
         if st.button("❌ Cerrar Sesión", use_container_width=True):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
@@ -1455,38 +1496,43 @@ def show_main_app():
     # Header
     st.markdown("""
     <h1 style="
-        text-align: center;
-        font-size: 48px;
-        font-weight: 800;
-        color: #111827;
-        margin-bottom: 4px;
-        letter-spacing: -0.5px;
+    text-align: center;
+    font-size: 48px;
+    font-weight: 800;
+    color: #111827;
+    margin-bottom: 4px;
+    letter-spacing: -0.5px;
     ">
-        METPRO SISTEMA ERP
+    METPRO SISTEMA ERP
     </h1>
     <p style="
-        text-align: center;
-        color: #4b5563;
-        font-size: 18px;
-        margin-top: 0;
-        letter-spacing: 0.5px;
-        font-weight: 500;
+    text-align: center;
+    color: #4b5563;
+    font-size: 18px;
+    margin-top: 0;
+    letter-spacing: 0.5px;
+    font-weight: 500;
     ">
-        Sistema de Cálculo Industrial
+    Sistema de Cálculo Industrial
     </p>
     <div style="
-        width: 80px;
-        height: 4px;
-        background: #111827;
-        margin: 12px auto;
-        border-radius: 2px;
+    width: 80px;
+    height: 4px;
+    background: #111827;
+    margin: 12px auto;
+    border-radius: 2px;
     "></div>
     """, unsafe_allow_html=True)
+    
+    # Show Reports module if toggled
+    if st.session_state.get('show_reports'):
+        show_reports_module()
+        return  # ← EXIT EARLY TO AVOID SHOWING QUOTES
     
     # Product Manager Modal
     if st.session_state.show_product_manager:
         show_product_manager()
-        return
+        return  # ← EXIT EARLY
     
     # Client Info Banner
     if st.session_state.current_client_id:
@@ -1509,7 +1555,6 @@ def show_main_app():
         st.stop()  # Prevent quote form from rendering
     
     st.divider()
-    
     # Quote Form & Saved Quotes
     show_quote_form()
     st.markdown("### 📂 Cotizaciones Guardadas")
@@ -1521,11 +1566,9 @@ def show_main_app():
 def main():
     # Initialize session state FIRST
     init_session_state()
-    
     # Load external CSS if exists
     if os.path.exists("style.css"):
         load_css("style.css")
-    
     # Route
     if not st.session_state.authenticated:
         show_login_page()
@@ -1533,5 +1576,4 @@ def main():
         show_main_app()
 
 if __name__ == "__main__":
-
     main()
